@@ -35,4 +35,4 @@ def filter_wxs_bams():
     print(f"Output: {OUTPUT_MANIFEST}")
 
 if __name__ == '__main__':
-    filter_wxs_manifest()
+    filter_wxs_bams()

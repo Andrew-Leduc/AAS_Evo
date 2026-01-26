@@ -12,10 +12,16 @@ Usage:
 import json
 import requests
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from config import META_DIR
+
+# Request settings
+REQUEST_TIMEOUT = 30  # seconds
+RETRY_ATTEMPTS = 3
+DELAY_BETWEEN_BATCHES = 1  # seconds
 
 WXS_MANIFEST = META_DIR / 'GDC_meta' / 'manifest_wxs_bams.tsv'
 OUTPUT_META = META_DIR / 'GDC_meta' / 'gdc_meta.tsv'
@@ -36,10 +42,12 @@ def get_file_ids_from_manifest():
 def fetch_metadata_batch(file_ids, batch_size=100):
     """Fetch metadata from GDC API in batches."""
     all_results = []
+    total_batches = (len(file_ids) + batch_size - 1) // batch_size
 
     for i in range(0, len(file_ids), batch_size):
         batch = file_ids[i:i+batch_size]
-        print(f"Fetching batch {i//batch_size + 1} ({len(batch)} files)...")
+        batch_num = i // batch_size + 1
+        print(f"Fetching batch {batch_num}/{total_batches} ({len(batch)} files)...")
 
         filters = {
             "op": "in",
@@ -69,11 +77,26 @@ def fetch_metadata_batch(file_ids, batch_size=100):
             "size": batch_size
         }
 
-        response = requests.get(GDC_FILES_ENDPOINT, params=params)
-        response.raise_for_status()
-        data = response.json()
+        # Retry logic
+        for attempt in range(RETRY_ATTEMPTS):
+            try:
+                response = requests.get(GDC_FILES_ENDPOINT, params=params, timeout=REQUEST_TIMEOUT)
+                response.raise_for_status()
+                data = response.json()
+                all_results.extend(data.get('data', {}).get('hits', []))
+                break
+            except (requests.Timeout, requests.RequestException) as e:
+                if attempt < RETRY_ATTEMPTS - 1:
+                    wait_time = 2 ** attempt  # exponential backoff
+                    print(f"  Retry {attempt + 1}/{RETRY_ATTEMPTS} after {wait_time}s: {e}")
+                    time.sleep(wait_time)
+                else:
+                    print(f"  Failed after {RETRY_ATTEMPTS} attempts: {e}")
+                    raise
 
-        all_results.extend(data.get('data', {}).get('hits', []))
+        # Delay between batches to avoid rate limiting
+        if i + batch_size < len(file_ids):
+            time.sleep(DELAY_BETWEEN_BATCHES)
 
     return all_results
 

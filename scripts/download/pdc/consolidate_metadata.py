@@ -24,6 +24,7 @@ from config import META_DIR
 PDC_META_DIR = META_DIR / 'PDC_meta'
 OUTPUT_FILE_MANIFEST = META_DIR / 'PDC_meta' / 'pdc_all_files.tsv'
 OUTPUT_SAMPLE_META = META_DIR / 'PDC_meta' / 'pdc_meta.tsv'
+OUTPUT_FILE_TMT_MAP = META_DIR / 'PDC_meta' / 'pdc_file_tmt_map.tsv'
 
 def find_csv_files(folder, prefix):
     """Find CSV files matching prefix in folder."""
@@ -76,23 +77,23 @@ def consolidate_all_tissues():
 
     return all_files, all_biospecimens, all_experiments
 
-def build_aliquot_to_sample_map(biospecimens):
-    """Map aliquot ID to sample metadata."""
-    aliquot_map = {}
+def build_case_sample_map(biospecimens):
+    """Map (case_id, sample_type) to sample metadata for lookup."""
+    case_map = {}
     for b in biospecimens:
-        aliquot_id = b.get('Aliquot Submitter ID', '')
-        if aliquot_id:
-            aliquot_map[aliquot_id] = {
-                'case_submitter_id': b.get('Case Submitter ID', ''),
+        case_id = b.get('Case Submitter ID', '')
+        sample_type = b.get('Sample Type', '')
+        if case_id:
+            key = (case_id, sample_type)
+            case_map[key] = {
+                'aliquot_submitter_id': b.get('Aliquot Submitter ID', ''),
                 'sample_submitter_id': b.get('Sample Submitter ID', ''),
-                'sample_type': b.get('Sample Type', ''),
                 'tissue_type': b.get('Tissue Type', ''),
                 'primary_site': b.get('Primary Site', ''),
-                'disease_type': b.get('Disease Type', ''),
             }
-    return aliquot_map
+    return case_map
 
-def build_run_to_samples_map(experiments, aliquot_map):
+def build_run_to_samples_map(experiments, case_map):
     """Map Run Metadata ID to samples in that plex."""
     tmt_channels = [
         'tmt_126', 'tmt_127n', 'tmt_127c', 'tmt_128n', 'tmt_128c',
@@ -109,25 +110,32 @@ def build_run_to_samples_map(experiments, aliquot_map):
         for channel in tmt_channels:
             value = exp.get(channel, '')
             if value:
-                # Format is typically "AliquotID\nSampleType" or just aliquot ID
+                # Format is "CaseID\nSampleType" e.g. "C3N-02758\nPrimary Tumor"
                 lines = value.strip().split('\n')
-                aliquot_id = lines[0].strip() if lines else ''
+                case_id = lines[0].strip() if lines else ''
+                sample_type = lines[1].strip() if len(lines) > 1 else ''
 
-                # Look up sample info
-                if aliquot_id in aliquot_map:
-                    sample_info = aliquot_map[aliquot_id].copy()
-                    sample_info['aliquot_id'] = aliquot_id
-                    sample_info['tmt_channel'] = channel
-                    samples_in_run.append(sample_info)
+                # Look up additional info from biospecimen
+                key = (case_id, sample_type)
+                extra_info = case_map.get(key, {})
+
+                samples_in_run.append({
+                    'case_submitter_id': case_id,
+                    'sample_type': sample_type,
+                    'tmt_channel': channel,
+                    'aliquot_submitter_id': extra_info.get('aliquot_submitter_id', ''),
+                    'tissue_type': extra_info.get('tissue_type', ''),
+                    'primary_site': extra_info.get('primary_site', ''),
+                })
 
         run_map[run_id] = samples_in_run
 
     return run_map
 
 def write_file_manifest(files):
-    """Write consolidated file manifest."""
+    """Write consolidated file manifest (usable for downloads)."""
     headers = ['file_id', 'file_name', 'run_metadata_id', 'study_name',
-               'pdc_study_id', 'file_size', 'md5sum', 'tissue_folder']
+               'pdc_study_id', 'file_size', 'md5sum', 'tissue_folder', 'download_url']
 
     with open(OUTPUT_FILE_MANIFEST, 'w', newline='') as f:
         writer = csv.writer(f, delimiter='\t')
@@ -143,9 +151,11 @@ def write_file_manifest(files):
                 file.get('File Size (in bytes)', ''),
                 file.get('Md5sum', ''),
                 file.get('tissue_folder', ''),
+                file.get('File Download Link', ''),
             ])
 
     print(f"\nWrote {len(files)} files to {OUTPUT_FILE_MANIFEST}")
+    print("NOTE: Download URLs are signed and will expire. Re-download manifests from PDC if needed.")
 
 def write_sample_metadata(biospecimens):
     """Write consolidated sample metadata."""
@@ -170,6 +180,44 @@ def write_sample_metadata(biospecimens):
 
     print(f"Wrote {len(biospecimens)} samples to {OUTPUT_SAMPLE_META}")
 
+def write_file_tmt_mapping(files, run_map):
+    """Write mapping of raw files to TMT channels and samples."""
+    headers = ['file_name', 'run_metadata_id', 'tmt_channel', 'case_submitter_id',
+               'sample_type', 'tissue_type', 'aliquot_submitter_id', 'tissue_folder']
+
+    rows_written = 0
+    with open(OUTPUT_FILE_TMT_MAP, 'w', newline='') as f:
+        writer = csv.writer(f, delimiter='\t')
+        writer.writerow(headers)
+
+        for file in files:
+            file_name = file.get('File Name', '')
+            run_id = file.get('Run Metadata ID', '')
+            tissue_folder = file.get('tissue_folder', '')
+
+            # Get samples in this run's TMT plex
+            samples = run_map.get(run_id, [])
+
+            if samples:
+                for sample in samples:
+                    writer.writerow([
+                        file_name,
+                        run_id,
+                        sample.get('tmt_channel', ''),
+                        sample.get('case_submitter_id', ''),
+                        sample.get('sample_type', ''),
+                        sample.get('tissue_type', ''),
+                        sample.get('aliquot_submitter_id', ''),
+                        tissue_folder,
+                    ])
+                    rows_written += 1
+            else:
+                # No TMT mapping found, write file with empty sample info
+                writer.writerow([file_name, run_id, '', '', '', '', '', tissue_folder])
+                rows_written += 1
+
+    print(f"Wrote {rows_written} file-sample mappings to {OUTPUT_FILE_TMT_MAP}")
+
 def main():
     print("Consolidating PDC metadata from all tissue folders...\n")
 
@@ -181,12 +229,13 @@ def main():
     print(f"  Experimental runs: {len(all_experiments)}")
 
     # Build mapping
-    aliquot_map = build_aliquot_to_sample_map(all_biospecimens)
-    run_map = build_run_to_samples_map(all_experiments, aliquot_map)
+    case_map = build_case_sample_map(all_biospecimens)
+    run_map = build_run_to_samples_map(all_experiments, case_map)
 
     # Write outputs
     write_file_manifest(all_files)
     write_sample_metadata(all_biospecimens)
+    write_file_tmt_mapping(all_files, run_map)
 
     print("\nDone!")
 
