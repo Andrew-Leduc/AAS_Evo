@@ -19,7 +19,10 @@ from config import META_DIR
 
 GDC_META = META_DIR / 'GDC_meta' / 'gdc_meta.tsv'
 PDC_TMT_MAP = META_DIR / 'PDC_meta' / 'pdc_file_tmt_map.tsv'
+PDC_ALL_FILES = META_DIR / 'PDC_meta' / 'pdc_all_files.tsv'
 OUTPUT_REPORT = META_DIR / 'mapping_report.tsv'
+OUTPUT_GDC_MATCHED = META_DIR / 'GDC_meta' / 'gdc_meta_matched.tsv'
+OUTPUT_PDC_MATCHED = META_DIR / 'PDC_meta' / 'pdc_all_files_matched.tsv'
 
 def load_gdc_samples():
     """Load GDC samples keyed by (case_id, sample_type)."""
@@ -255,6 +258,73 @@ def write_matched_report(report):
 
     print(f"\nDetailed report written to: {OUTPUT_REPORT}")
 
+def write_pruned_gdc_manifest(matched_keys):
+    """Write GDC metadata filtered to only matched samples."""
+    matched_count = 0
+    total_count = 0
+
+    with open(GDC_META, 'r') as infile, open(OUTPUT_GDC_MATCHED, 'w', newline='') as outfile:
+        reader = csv.DictReader(infile, delimiter='\t')
+        writer = csv.DictWriter(outfile, fieldnames=reader.fieldnames, delimiter='\t')
+        writer.writeheader()
+
+        for row in reader:
+            total_count += 1
+            case_id = row.get('case_submitter_id', '')
+            sample_type = row.get('sample_type', '')
+            norm_type = normalize_sample_type(sample_type)
+
+            if (case_id, norm_type) in matched_keys:
+                writer.writerow(row)
+                matched_count += 1
+
+    print(f"\nPruned GDC manifest: {matched_count:,} of {total_count:,} BAM files")
+    print(f"  Written to: {OUTPUT_GDC_MATCHED}")
+
+def write_pruned_pdc_manifest(matched_raw_files):
+    """Write PDC file manifest filtered to only matched RAW files."""
+    matched_count = 0
+    total_count = 0
+
+    with open(PDC_ALL_FILES, 'r') as infile, open(OUTPUT_PDC_MATCHED, 'w', newline='') as outfile:
+        reader = csv.DictReader(infile, delimiter='\t')
+        writer = csv.DictWriter(outfile, fieldnames=reader.fieldnames, delimiter='\t')
+        writer.writeheader()
+
+        for row in reader:
+            total_count += 1
+            file_name = row.get('file_name', '')
+
+            if file_name in matched_raw_files:
+                writer.writerow(row)
+                matched_count += 1
+
+    print(f"Pruned PDC manifest: {matched_count:,} of {total_count:,} RAW files")
+    print(f"  Written to: {OUTPUT_PDC_MATCHED}")
+
+def get_matched_keys_and_files(gdc_samples, pdc_samples):
+    """Get matched sample keys and RAW file names."""
+    # Build normalized lookup for PDC
+    pdc_normalized = defaultdict(list)
+    for (case_id, sample_type), entries in pdc_samples.items():
+        norm_type = normalize_sample_type(sample_type)
+        pdc_normalized[(case_id, norm_type)].extend(entries)
+
+    # Find matched keys
+    matched_keys = set()
+    matched_raw_files = set()
+
+    for (case_id, sample_type) in gdc_samples.keys():
+        norm_type = normalize_sample_type(sample_type)
+        pdc_key = (case_id, norm_type)
+
+        if pdc_key in pdc_normalized:
+            matched_keys.add(pdc_key)
+            for entry in pdc_normalized[pdc_key]:
+                matched_raw_files.add(entry['file_name'])
+
+    return matched_keys, matched_raw_files
+
 def main():
     print("Loading GDC metadata...")
     gdc_samples = load_gdc_samples()
@@ -269,6 +339,14 @@ def main():
 
     print_report(report)
     write_matched_report(report)
+
+    # Write pruned manifests for downloading only matched samples
+    print("\n" + "=" * 60)
+    print("WRITING PRUNED MANIFESTS (matched samples only)")
+    print("=" * 60)
+    matched_keys, matched_raw_files = get_matched_keys_and_files(gdc_samples, pdc_samples)
+    write_pruned_gdc_manifest(matched_keys)
+    write_pruned_pdc_manifest(matched_raw_files)
 
 if __name__ == '__main__':
     main()
