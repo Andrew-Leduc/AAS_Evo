@@ -23,9 +23,9 @@ ENV = get_environment()
 # Base paths
 if ENV == 'cluster':
     # Cluster paths
-    SCRIPTS_DIR = Path('/home/leduc.an/AAS_Evo')
+    SCRIPTS_DIR = Path('/home/leduc.an/AAS_Evo_project/AAS_Evo')
     DATA_DIR = Path('/scratch/leduc.an/AAS_Evo')
-    META_DIR = Path('/home/leduc.an/AAS_Evo_meta')
+    META_DIR = Path('/home/leduc.an/AAS_Evo_project/AAS_Evo_meta')
     BAMS_DIR = DATA_DIR / 'BAMS'
     RAW_DIR = DATA_DIR / 'RAW'
 else:
