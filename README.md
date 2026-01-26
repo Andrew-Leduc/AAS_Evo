@@ -1,49 +1,83 @@
 # AAS_Evo
 
-A data analysis system for processing and analyzing datasets.
+Genomics and proteomics data analysis pipeline for downloading and processing data from GDC (Genomic Data Commons) and PDC (Proteomics Data Commons) portals.
 
 ## Overview
 
-AAS_Evo provides tools for data processing, analysis, and visualization to help extract insights from your data.
+This repository contains scripts for:
+- Downloading genomics data (BAM files) from GDC
+- Downloading proteomics data (RAW files) from PDC
+- Analysis pipelines for multi-omics integration
 
-## Getting Started
+## Directory Structure
 
-### Prerequisites
+### Local Development
+```
+AAS_Evo/
+├── config/
+│   └── paths.py          # Path configuration (local vs cluster)
+├── scripts/
+│   ├── download/         # Data download scripts
+│   │   ├── gdc/          # GDC download utilities
+│   │   └── pdc/          # PDC download utilities
+│   └── analysis/         # Analysis scripts
+├── utils/                # Shared utilities
+└── README.md
+```
 
-- Python 3.8+
-- pip
+### Cluster Layout
+```
+/home/leduc.an/AAS_Evo/           # Scripts (this repo)
+/scratch/leduc.an/AAS_Evo/
+├── BAMS/                          # Genomics data (BAM files)
+└── RAW/                           # Proteomics data (RAW files)
+```
 
-### Installation
+## Setup
 
+### Local Development
 ```bash
 git clone https://github.com/Andrew-Leduc/AAS_Evo.git
 cd AAS_Evo
 pip install -r requirements.txt
 ```
 
-### Usage
+### Cluster Deployment
+```bash
+cd /home/leduc.an
+git clone https://github.com/Andrew-Leduc/AAS_Evo.git
+cd AAS_Evo
+pip install -r requirements.txt
+
+# Create data directories
+mkdir -p /scratch/leduc.an/AAS_Evo/BAMS
+mkdir -p /scratch/leduc.an/AAS_Evo/RAW
+```
+
+## Configuration
+
+The project automatically detects whether it's running locally or on the cluster. To override, set the environment variable:
 
 ```bash
-python main.py
+export AAS_ENV=cluster  # or 'local'
 ```
 
-## Project Structure
+## Usage
 
-```
-AAS_Evo/
-├── README.md
-├── requirements.txt
-├── main.py
-└── src/
-    ├── data/
-    ├── analysis/
-    └── utils/
+```bash
+# Download GDC data
+python scripts/download/gdc/download.py --manifest manifest.txt
+
+# Download PDC data
+python scripts/download/pdc/download.py --manifest manifest.txt
 ```
 
-## Contributing
+## Requirements
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+- Python 3.8+
+- gdc-client (for GDC downloads)
+- PDC API access
 
 ## License
 
-This project is licensed under the MIT License.
+MIT License

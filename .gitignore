@@ -1,0 +1,47 @@
+# Data directories (don't commit large data files)
+data/
+BAMS/
+RAW/
+*.bam
+*.bai
+*.raw
+*.mzML
+*.mzXML
+
+# Manifests with sensitive info
+manifests/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tokens and credentials
+*.token
+token.txt
+credentials.json
+
+# Logs
+*.log
+logs/
+
+# Jupyter
+.ipynb_checkpoints/
