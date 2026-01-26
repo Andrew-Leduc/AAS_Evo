@@ -25,12 +25,14 @@ if ENV == 'cluster':
     # Cluster paths
     SCRIPTS_DIR = Path('/home/leduc.an/AAS_Evo')
     DATA_DIR = Path('/scratch/leduc.an/AAS_Evo')
+    META_DIR = Path('/home/leduc.an/AAS_Evo_meta')
     BAMS_DIR = DATA_DIR / 'BAMS'
     RAW_DIR = DATA_DIR / 'RAW'
 else:
     # Local development paths
     SCRIPTS_DIR = Path(__file__).parent.parent
     DATA_DIR = SCRIPTS_DIR / 'data'
+    META_DIR = Path('/Users/andrewleduc/Desktop/AAS_Evo_meta')
     BAMS_DIR = DATA_DIR / 'BAMS'
     RAW_DIR = DATA_DIR / 'RAW'
 
@@ -54,6 +56,7 @@ def print_config():
     print(f"Environment: {ENV}")
     print(f"Scripts directory: {SCRIPTS_DIR}")
     print(f"Data directory: {DATA_DIR}")
+    print(f"Meta directory: {META_DIR}")
     print(f"BAMS directory: {BAMS_DIR}")
     print(f"RAW directory: {RAW_DIR}")
 

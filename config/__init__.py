@@ -2,6 +2,7 @@ from .paths import (
     ENV,
     SCRIPTS_DIR,
     DATA_DIR,
+    META_DIR,
     BAMS_DIR,
     RAW_DIR,
     DOWNLOAD_DIR,
