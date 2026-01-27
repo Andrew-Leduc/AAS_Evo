@@ -61,7 +61,7 @@ echo "Files in manifest: $TOTAL"
 echo ""
 
 # Ensure required Python packages are installed
-pip3 install --user --quiet requests urllib3
+python3 -m pip install --user --quiet requests urllib3
 
 # Run download script
 # Use -u for unbuffered output so logs appear in real-time
