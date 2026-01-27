@@ -16,7 +16,7 @@
 #   sbatch submit_download.sh [manifest] [output_dir]
 #
 # Defaults:
-#   manifest: $META_DIR/PDC_meta/pdc_all_files_matched.tsv
+#   manifest: $META_DIR/PDC_meta/pdc_all_files.tsv
 #   output: /scratch/leduc.an/AAS_Evo/RAW
 #
 
@@ -28,7 +28,7 @@ META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo_meta"
 DATA_DIR="/scratch/leduc.an/AAS_Evo"
 
 # Default arguments
-DEFAULT_MANIFEST="${META_DIR}/PDC_meta/pdc_all_files_matched.tsv"
+DEFAULT_MANIFEST="${META_DIR}/PDC_meta/pdc_all_files.tsv"
 DEFAULT_OUTPUT="${DATA_DIR}/RAW"
 
 MANIFEST="${1:-$DEFAULT_MANIFEST}"
