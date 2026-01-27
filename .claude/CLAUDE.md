@@ -44,9 +44,12 @@ AAS_Evo/                              # This repo
 │   │   │   ├── submit_download.sh    # SLURM job wrapper
 │   │   │   └── download_files.sh     # Alternative bash downloader
 │   │   └── mapping_report.py         # GDC-PDC sample matching & pruning
-│   └── preproc/                      # Preprocessing (WIP)
-│       ├── ms_raw/                   # RAW file processing
-│       └── wxs/                      # BAM file processing
+│   └── proc_bams/                    # BAM processing pipeline
+│       ├── submit_variant_call.sh    # SLURM array job for variant calling
+│       ├── submit_vep.sh             # SLURM array job for VEP annotation
+│       ├── consolidate_missense.sh   # Merge all missense mutations
+│       ├── align_and_variant_call.sh # Single-sample test script
+│       └── run_vep.sh                # Single-sample VEP test
 └── utils/
 ```
 
@@ -73,8 +76,16 @@ AAS_Evo_meta/
 ### Data Directory (cluster: /scratch/leduc.an/AAS_Evo/)
 ```
 /scratch/leduc.an/AAS_Evo/
-├── BAMS/                             # GDC BAM files
+├── BAMS/                             # GDC BAM files (by UUID subdirectory)
 ├── RAW/                              # PDC RAW files
+├── VCF/                              # Variant calls (from BAM processing)
+├── VEP/                              # VEP annotations + missense tables
+├── ref/                              # Reference files
+│   ├── hg38.fa                       # Human reference genome
+│   ├── hg38.fa.fai                   # Reference index
+│   └── cds.bed                       # CDS regions (speeds up variant calling)
+├── bam_list.txt                      # List of BAM paths for array jobs
+├── vcf_list.txt                      # List of VCF paths for VEP
 └── logs/                             # SLURM job logs
 ```
 
@@ -120,6 +131,57 @@ sbatch scripts/download/pdc/submit_download.sh
 # GDC BAM files (requires gdc-client + token for controlled access)
 python scripts/download/gdc/download.py -m manifest.txt -t token.txt
 ```
+
+### 5. Process BAM Files (Variant Calling)
+```bash
+# Generate BAM list
+find /scratch/leduc.an/AAS_Evo/BAMS -name "*.bam" > /scratch/leduc.an/AAS_Evo/bam_list.txt
+
+# Submit variant calling array job
+NUM_BAMS=$(wc -l < /scratch/leduc.an/AAS_Evo/bam_list.txt)
+sbatch --array=1-${NUM_BAMS}%10 scripts/proc_bams/submit_variant_call.sh
+```
+
+### 6. Annotate Variants with VEP
+```bash
+# Generate VCF list (after step 5 completes)
+ls /scratch/leduc.an/AAS_Evo/VCF/*.vcf.gz > /scratch/leduc.an/AAS_Evo/vcf_list.txt
+
+# Submit VEP annotation array job
+NUM_VCFS=$(wc -l < /scratch/leduc.an/AAS_Evo/vcf_list.txt)
+sbatch --array=1-${NUM_VCFS}%10 scripts/proc_bams/submit_vep.sh
+```
+
+### 7. Consolidate Missense Mutations
+```bash
+# Merge all per-sample missense TSVs into one table
+bash scripts/proc_bams/consolidate_missense.sh
+# Output: /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv
+```
+
+## BAM Processing Pipeline Details
+
+The BAM processing pipeline extracts missense mutations for multi-omics integration:
+
+1. **Variant Calling** (`submit_variant_call.sh`)
+   - Uses bcftools mpileup/call on CDS regions only (via `-R cds.bed`)
+   - Filters: QUAL≥20, depth≥10
+   - Outputs VCF + TSV with VAF per sample
+
+2. **VEP Annotation** (`submit_vep.sh`)
+   - Runs Ensembl VEP via Apptainer container
+   - Adds gene symbols, HGVS notation, protein changes
+   - Includes gnomAD population frequencies (`--af_gnomad`)
+   - Extracts missense variants to per-sample TSV
+
+3. **Final Output Columns** (`all_missense_mutations.tsv`)
+   - `sample_id`: GDC UUID
+   - `CHROM`, `POS`, `REF`, `ALT`: Variant location
+   - `SYMBOL`: Gene symbol (e.g., TP53)
+   - `HGVSp`: Protein change (e.g., p.Arg273His)
+   - `Amino_acids`: R/H format
+   - `gnomAD_AF`: Population frequency
+   - `VAF`: Variant allele frequency in sample
 
 ## PDC Download Script Details
 
