@@ -22,6 +22,9 @@
 
 set -e
 
+# Load Python module (required on compute nodes)
+module load anaconda3/2022.05
+
 # Project paths
 SCRIPTS_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo"
 META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo_meta"
