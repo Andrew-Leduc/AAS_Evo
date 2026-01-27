@@ -60,9 +60,10 @@ TOTAL=$(tail -n +2 "$MANIFEST" | wc -l | tr -d ' ')
 echo "Files in manifest: $TOTAL"
 echo ""
 
-# Run download script (auto-select option 1 for download)
+# Run download script
+# Use -u for unbuffered output so logs appear in real-time
 cd "$SCRIPTS_DIR/scripts/download/pdc"
-echo "1" | python download.py "$MANIFEST" -o "$OUTPUT_DIR"
+python -u download.py "$MANIFEST" -o "$OUTPUT_DIR"
 
 echo ""
 echo "========================================"

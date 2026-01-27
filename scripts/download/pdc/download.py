@@ -67,12 +67,24 @@ def make_session():
     Create a requests.Session with basic retry behavior.
     """
     session = requests.Session()
-    retries = Retry(
-        total=RETRY_TOTAL,
-        backoff_factor=RETRY_BACKOFF,
-        status_forcelist=RETRY_STATUS_LIST,
-        allowed_methods=frozenset(["GET", "HEAD"])
-    )
+    # Handle urllib3 version compatibility:
+    # - newer versions use 'allowed_methods'
+    # - older versions use 'method_whitelist'
+    try:
+        retries = Retry(
+            total=RETRY_TOTAL,
+            backoff_factor=RETRY_BACKOFF,
+            status_forcelist=RETRY_STATUS_LIST,
+            allowed_methods=frozenset(["GET", "HEAD"])
+        )
+    except TypeError:
+        # Fallback for older urllib3 versions
+        retries = Retry(
+            total=RETRY_TOTAL,
+            backoff_factor=RETRY_BACKOFF,
+            status_forcelist=RETRY_STATUS_LIST,
+            method_whitelist=frozenset(["GET", "HEAD"])
+        )
     session.mount("https://", HTTPAdapter(max_retries=retries))
     # Simple User-Agent so server logs can distinguish this client
     session.headers.update({"User-Agent": "pdc-download-script/1.0"})
@@ -289,21 +301,8 @@ def main():
         os.makedirs(output_dir, exist_ok=True)
         print(f"Output directory: {output_dir}")
 
-    user_input = input(
-        "> Enter 1 to download and organize files\n"
-        "> Enter 2 to organize already downloaded files\n"
-        "> Enter 3 to exit\n"
-        "> Your choice: "
-    ).strip()
-
-    if user_input == "1":
-        downloadOrganize(file_name, delimiter, output_dir)
-    elif user_input == "2":
-        organizeFolders(file_name, delimiter, output_dir)
-    elif user_input == "3":
-        return
-    else:
-        print("Please enter a valid option (1, 2, or 3).")
+    # Download and organize files
+    downloadOrganize(file_name, delimiter, output_dir)
 
 
 if __name__ == "__main__":
