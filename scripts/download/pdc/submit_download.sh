@@ -60,6 +60,9 @@ TOTAL=$(tail -n +2 "$MANIFEST" | wc -l | tr -d ' ')
 echo "Files in manifest: $TOTAL"
 echo ""
 
+# Ensure required Python packages are installed
+pip3 install --user --quiet requests urllib3
+
 # Run download script
 # Use -u for unbuffered output so logs appear in real-time
 # Use python3 explicitly (cluster's 'python' may be Python 2)
