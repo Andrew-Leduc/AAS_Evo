@@ -1,102 +1,310 @@
-#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-PDC Data Download Script
+downloadPDCData.py
 
-Downloads proteomics RAW files using pdc-client.
+Sample Python script to batch-download PDC data files to a local machine
+based on a PDC File Manifest (TSV or CSV).
 
 Usage:
-    python download.py                           # Uses default matched manifest
-    python download.py -m path/to/manifest.tsv   # Custom manifest
-    python download.py --dry-run                 # Show command without running
+    python downloadPDCData.py <PDC File manifest> [-o OUTPUT_DIR]
+
+The script will:
+  - Download files listed in the manifest
+  - Organize them into a folder hierarchy by Study, Version, Category, etc.
+  - Skip files that are already present and non-empty
+  - Add light pacing and retries to help avoid download interruptions
+  - Allow you to rerun the script to pick up any files that were missed
 """
 
-import argparse
-import subprocess
+# Notes:
+# - Signed URLs in the PDC manifest expire after 7 days. If links stop working,
+#   please re-export a fresh manifest from the portal.
+# - To manage system resources and egress, the PDC applies a per-file download
+#   limit across a 24-hour period. Repeatedly requesting the same file in a short
+#   time window may result in a temporary 24-hour access restriction for that IP.
+#   If a file is skipped, simply rerun the script later to pick it up.
+
+
 import sys
-from pathlib import Path
+import csv
+import os
+import shutil
+import time
+import argparse
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-from config import META_DIR, RAW_DIR, ensure_dirs
+print("downloadPDCData: public version (with basic retry and pacing)")
 
-DEFAULT_MANIFEST = META_DIR / 'PDC_meta' / 'pdc_all_files_matched.tsv'
+# -------------------------------------------------------------------
+# CONFIGURATION (you can adjust these defaults as needed)
+# -------------------------------------------------------------------
+
+# Pause between individual file downloads (seconds)
+PER_FILE_SLEEP_SEC = 2
+
+# Basic rate limiting to help avoid server-side rate limits:
+# Maximum number of download attempts per time window
+RATE_LIMIT = 10          # max requests per window
+WINDOW_SEC = 600          # window length in seconds (10 minutes)
+SAFETY_SEC = 3            # small buffer after window reset
+
+# HTTP request settings
+TIMEOUT_SEC = 60          # per-request timeout
+CHUNK_SIZE = 1024 * 256   # download chunk size (bytes)
+
+# Retry settings for transient network/server errors
+RETRY_TOTAL = 5
+RETRY_BACKOFF = 1.5       # seconds, exponential backoff factor
+RETRY_STATUS_LIST = (429, 500, 502, 503, 504)
+
+# -------------------------------------------------------------------
 
 
-def download_with_pdc_client(manifest_path, output_dir, n_processes=4, dry_run=False):
-    """Download files using pdc-client."""
-    cmd = [
-        'pdc-client', 'download',
-        '-m', str(manifest_path),
-        '-d', str(output_dir),
-        '-n', str(n_processes),
-    ]
+def make_session():
+    """
+    Create a requests.Session with basic retry behavior.
+    """
+    session = requests.Session()
+    retries = Retry(
+        total=RETRY_TOTAL,
+        backoff_factor=RETRY_BACKOFF,
+        status_forcelist=RETRY_STATUS_LIST,
+        allowed_methods=frozenset(["GET", "HEAD"])
+    )
+    session.mount("https://", HTTPAdapter(max_retries=retries))
+    # Simple User-Agent so server logs can distinguish this client
+    session.headers.update({"User-Agent": "pdc-download-script/1.0"})
+    return session
 
-    print(f"Manifest: {manifest_path}")
-    print(f"Output directory: {output_dir}")
-    print(f"Parallel downloads: {n_processes}")
-    print(f"\nCommand: {' '.join(cmd)}")
 
-    if dry_run:
-        print("\n[DRY RUN - command not executed]")
+def safe_download(session, url, dst_path):
+    """
+    Download a single file to dst_path using streaming.
+    Returns True on success, False if the file was not downloaded.
+    """
+    filename = os.path.basename(dst_path)
+    try:
+        resp = session.get(url, stream=True, timeout=TIMEOUT_SEC)
+
+        if resp.status_code != 200:
+            print(f"[SKIP] {filename} -> HTTP {resp.status_code} (no file downloaded)")
+            return False
+
+        # Avoid writing empty responses
+        clen = resp.headers.get("Content-Length")
+        if clen is not None and clen.isdigit() and int(clen) == 0:
+            print(f"[SKIP] {filename} -> empty Content-Length")
+            return False
+
+        with open(dst_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=CHUNK_SIZE):
+                if chunk:
+                    f.write(chunk)
+
+        return True
+
+    except requests.RequestException as e:
+        print(f"[ERR ] {filename} -> {e}")
+        return False
+
+
+def ensure_folder(path):
+    """
+    Create the folder if it does not exist.
+    """
+    os.makedirs(path, exist_ok=True)
+
+
+def build_folder_path(row, output_dir=None):
+    """
+    Build the destination folder path and file name from a manifest row.
+    Expected manifest columns:
+        - File Name
+        - Run Metadata ID
+        - PDC Study ID
+        - PDC Study Version
+        - Data Category
+        - File Type
+
+    Args:
+        row: Dict containing manifest row data
+        output_dir: Base output directory (defaults to current working directory)
+    """
+    fname = row["File Name"].strip()
+    folder = (row["Run Metadata ID"] or "").strip()
+    pdc_study_id = row["PDC Study ID"].strip()
+    study_version = row["PDC Study Version"].strip()
+    data_category = row["Data Category"].strip()
+    file_type = row["File Type"].strip()
+
+    # Folder structure:
+    # PDC Study ID / Study Version / Data Category / [Run Metadata ID] / File Type
+    if folder == "" or folder.lower() == "null":
+        folder_name = os.path.join(pdc_study_id, study_version, data_category, file_type)
+    else:
+        folder_name = os.path.join(pdc_study_id, study_version, data_category, folder, file_type)
+
+    base_dir = output_dir if output_dir else os.getcwd()
+    folder_path = os.path.join(base_dir, folder_name)
+    return folder_path, fname
+
+
+# --- Simple rate-window tracking state ---
+window_start = time.time()
+in_window = 0
+
+
+def maybe_wait_for_window():
+    """
+    Enforce a simple rate limit: up to RATE_LIMIT download attempts per WINDOW_SEC.
+    If the limit is reached before the window ends, pause until the window resets.
+    """
+    global window_start, in_window
+    elapsed = time.time() - window_start
+
+    # If the current time window has expired, reset counters
+    if elapsed >= WINDOW_SEC:
+        window_start = time.time()
+        in_window = 0
         return
 
-    print("\nStarting download...\n")
-    subprocess.run(cmd)
+    # If we reached the limit within the current window, sleep until the window resets
+    if in_window >= RATE_LIMIT:
+        wait_for = WINDOW_SEC - elapsed + SAFETY_SEC
+        print(
+            f"[PAUSE] Reached {in_window}/{RATE_LIMIT} downloads in "
+            f"{int(elapsed)}s. Sleeping {int(wait_for)}s to respect rate limits..."
+        )
+        time.sleep(wait_for)
+        window_start = time.time()
+        in_window = 0
+
+
+def downloadOrganize(file_name, delimiter, output_dir=None):
+    """
+    Download and organize files based on the provided manifest.
+
+    Args:
+        file_name: Path to manifest file
+        delimiter: CSV delimiter (',' or '\t')
+        output_dir: Base output directory (defaults to current working directory)
+    """
+    global in_window
+    session = make_session()
+
+    with open(file_name, newline="") as f:
+        reader = csv.DictReader(f, delimiter=delimiter)
+
+        for row in reader:
+            folder_path, fname = build_folder_path(row, output_dir)
+            url_link = row["File Download Link"].strip()
+
+            ensure_folder(folder_path)
+            dst_path = os.path.join(folder_path, fname)
+
+            # Skip if file already exists and is non-empty
+            if os.path.isfile(dst_path) and os.path.getsize(dst_path) > 0:
+                print(f"[HAVE] {dst_path}")
+                continue
+
+            # Rate-window management
+            maybe_wait_for_window()
+
+            print(f"[GET ] {fname}")
+            ok = safe_download(session, url_link, dst_path)
+            in_window += 1  # count this attempt (success or not)
+
+            if not ok:
+                # Clean up any zero-byte placeholder, if created
+                if os.path.exists(dst_path) and os.path.getsize(dst_path) == 0:
+                    os.remove(dst_path)
+                # Short backoff before next attempt
+                time.sleep(2)
+            else:
+                # Gentle per-file pacing to avoid bursts
+                time.sleep(PER_FILE_SLEEP_SEC)
+
+
+def organizeFolders(file_name, delimiter, output_dir=None):
+    """
+    Reorganize already-downloaded files into the expected folder hierarchy
+    based on the manifest. Does not download anything new.
+
+    Args:
+        file_name: Path to manifest file
+        delimiter: CSV delimiter (',' or '\t')
+        output_dir: Base output directory (defaults to current working directory)
+    """
+    with open(file_name, newline="") as f:
+        reader = csv.DictReader(f, delimiter=delimiter)
+
+        for row in reader:
+            folder_path, fname = build_folder_path(row, output_dir)
+            dst_path = os.path.join(folder_path, fname)
+
+            if os.path.isfile(dst_path) and os.path.getsize(dst_path) > 0:
+                print(f"[HAVE] {dst_path}")
+                continue
+
+            if os.path.isfile(fname):
+                ensure_folder(folder_path)
+                print(f"[MOVE] {fname} -> {folder_path}")
+                shutil.move(fname, folder_path)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Download PDC RAW files using pdc-client',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    python download.py                              # Download matched files
-    python download.py -m custom_manifest.tsv       # Custom manifest
-    python download.py -o /path/to/output           # Custom output directory
-    python download.py -n 8                         # 8 parallel downloads
-    python download.py --dry-run                    # Preview command
-        """
+        description="Download PDC data files based on a manifest file."
     )
     parser.add_argument(
-        '-m', '--manifest',
-        default=str(DEFAULT_MANIFEST),
-        help=f'Path to manifest file (default: {DEFAULT_MANIFEST})'
+        "manifest",
+        help="Path to PDC File Manifest (.tsv or .csv)"
     )
     parser.add_argument(
-        '-o', '--output',
-        default=str(RAW_DIR),
-        help=f'Output directory (default: {RAW_DIR})'
-    )
-    parser.add_argument(
-        '-n', '--n-processes',
-        type=int,
-        default=4,
-        help='Number of parallel download connections (default: 4)'
-    )
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Show command without executing'
+        "-o", "--output",
+        dest="output_dir",
+        default=None,
+        help="Output directory for downloaded files (default: current directory)"
     )
 
     args = parser.parse_args()
+    file_name = args.manifest
+    output_dir = args.output_dir
 
-    manifest_path = Path(args.manifest)
-    if not manifest_path.exists():
-        print(f"Error: Manifest not found: {manifest_path}")
-        sys.exit(1)
+    if not os.path.isfile(file_name):
+        sys.exit(f"Error: File '{file_name}' does not exist.")
 
-    ensure_dirs()
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Determine delimiter from file extension
+    if file_name.lower().endswith(".csv"):
+        delimiter = ","
+    elif file_name.lower().endswith(".tsv"):
+        delimiter = "\t"
+    else:
+        sys.exit("Input file must be a .tsv or .csv PDC File Manifest")
 
-    download_with_pdc_client(
-        manifest_path,
-        output_dir,
-        n_processes=args.n_processes,
-        dry_run=args.dry_run
-    )
+    # Create output directory if specified and doesn't exist
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"Output directory: {output_dir}")
+
+    user_input = input(
+        "> Enter 1 to download and organize files\n"
+        "> Enter 2 to organize already downloaded files\n"
+        "> Enter 3 to exit\n"
+        "> Your choice: "
+    ).strip()
+
+    if user_input == "1":
+        downloadOrganize(file_name, delimiter, output_dir)
+    elif user_input == "2":
+        organizeFolders(file_name, delimiter, output_dir)
+    elif user_input == "3":
+        return
+    else:
+        print("Please enter a valid option (1, 2, or 3).")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

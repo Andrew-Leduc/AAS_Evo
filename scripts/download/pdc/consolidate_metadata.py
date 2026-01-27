@@ -133,9 +133,15 @@ def build_run_to_samples_map(experiments, case_map):
     return run_map
 
 def write_file_manifest(files):
-    """Write consolidated file manifest (usable for downloads)."""
-    headers = ['file_id', 'file_name', 'run_metadata_id', 'study_name',
-               'pdc_study_id', 'file_size', 'md5sum', 'tissue_folder', 'download_url']
+    """Write consolidated file manifest (usable for downloads).
+
+    Uses the same column names as the original PDC manifest to ensure
+    compatibility with download.py.
+    """
+    # Match original PDC manifest column names for download.py compatibility
+    headers = ['File ID', 'File Name', 'Run Metadata ID', 'Study Name',
+               'PDC Study ID', 'PDC Study Version', 'Data Category', 'File Type',
+               'File Size (in bytes)', 'Md5sum', 'tissue_folder', 'File Download Link']
 
     with open(OUTPUT_FILE_MANIFEST, 'w', newline='') as f:
         writer = csv.writer(f, delimiter='\t')
@@ -148,6 +154,9 @@ def write_file_manifest(files):
                 file.get('Run Metadata ID', ''),
                 file.get('Study Name', ''),
                 file.get('PDC Study ID', ''),
+                file.get('PDC Study Version', ''),
+                file.get('Data Category', ''),
+                file.get('File Type', ''),
                 file.get('File Size (in bytes)', ''),
                 file.get('Md5sum', ''),
                 file.get('tissue_folder', ''),

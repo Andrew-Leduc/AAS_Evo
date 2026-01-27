@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=4G
+#SBATCH --time=108:00:00
+#SBATCH --partition=slavov
+#SBATCH --job-name=pdc_dl
+#SBATCH --output=/scratch/leduc.an/AAS_Evo/logs/pdc_dl_%j.out
+#SBATCH --error=/scratch/leduc.an/AAS_Evo/logs/pdc_dl_%j.err
+
+#
+# Submit PDC download job
+#
+# Usage:
+#   sbatch submit_download.sh [manifest] [output_dir]
+#
+# Defaults:
+#   manifest: $META_DIR/PDC_meta/pdc_all_files_matched.tsv
+#   output: /scratch/leduc.an/AAS_Evo/RAW
+#
+
+set -e
+
+# Project paths
+SCRIPTS_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo"
+META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo_meta"
+DATA_DIR="/scratch/leduc.an/AAS_Evo"
+
+# Default arguments
+DEFAULT_MANIFEST="${META_DIR}/PDC_meta/pdc_all_files_matched.tsv"
+DEFAULT_OUTPUT="${DATA_DIR}/RAW"
+
+MANIFEST="${1:-$DEFAULT_MANIFEST}"
+OUTPUT_DIR="${2:-$DEFAULT_OUTPUT}"
+
+# Create directories
+mkdir -p "$OUTPUT_DIR"
+mkdir -p "${DATA_DIR}/logs"
+
+echo "========================================"
+echo "PDC Download Job"
+echo "========================================"
+echo "Started: $(date)"
+echo "Job ID: ${SLURM_JOB_ID:-local}"
+echo "Node: $(hostname)"
+echo ""
+echo "Manifest: $MANIFEST"
+echo "Output: $OUTPUT_DIR"
+echo ""
+
+# Check manifest exists
+if [[ ! -f "$MANIFEST" ]]; then
+    echo "Error: Manifest not found: $MANIFEST"
+    exit 1
+fi
+
+# Count files to download
+TOTAL=$(tail -n +2 "$MANIFEST" | wc -l | tr -d ' ')
+echo "Files in manifest: $TOTAL"
+echo ""
+
+# Run download script (auto-select option 1 for download)
+cd "$SCRIPTS_DIR/scripts/download/pdc"
+echo "1" | python download.py "$MANIFEST" -o "$OUTPUT_DIR"
+
+echo ""
+echo "========================================"
+echo "Completed: $(date)"
+echo "========================================"

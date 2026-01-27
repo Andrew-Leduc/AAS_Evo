@@ -293,7 +293,8 @@ def write_pruned_pdc_manifest(matched_raw_files):
 
         for row in reader:
             total_count += 1
-            file_name = row.get('file_name', '')
+            # Use 'File Name' to match original PDC manifest column names
+            file_name = row.get('File Name', '')
 
             if file_name in matched_raw_files:
                 writer.writerow(row)
