@@ -62,8 +62,9 @@ echo ""
 
 # Run download script
 # Use -u for unbuffered output so logs appear in real-time
+# Use python3 explicitly (cluster's 'python' may be Python 2)
 cd "$SCRIPTS_DIR/scripts/download/pdc"
-python -u download.py "$MANIFEST" -o "$OUTPUT_DIR"
+python3 -u download.py "$MANIFEST" -o "$OUTPUT_DIR"
 
 echo ""
 echo "========================================"
