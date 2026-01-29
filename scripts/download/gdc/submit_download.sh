@@ -7,7 +7,7 @@
 #   bash submit_download.sh [manifest] [token] [num_chunks]
 #
 # Defaults:
-#   manifest:   $META_DIR/GDC_meta/manifest_wxs_bams.tsv
+#   manifest:   $META_DIR/GDC_meta/manifests/manifest_wxs_bams.tsv
 #   token:      $META_DIR/GDC_meta/gdc-user-token_AL.txt
 #   num_chunks: 20
 #
@@ -20,7 +20,7 @@ META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo_meta"
 DATA_DIR="/scratch/leduc.an/AAS_Evo"
 
 # Arguments
-DEFAULT_MANIFEST="${META_DIR}/GDC_meta/manifest_wxs_bams.tsv"
+DEFAULT_MANIFEST="${META_DIR}/GDC_meta/manifests/manifest_wxs_bams.tsv"
 DEFAULT_TOKEN="${META_DIR}/GDC_meta/gdc-user-token_AL.txt"
 DEFAULT_CHUNKS=20
 
@@ -28,7 +28,7 @@ MANIFEST="${1:-$DEFAULT_MANIFEST}"
 TOKEN="${2:-$DEFAULT_TOKEN}"
 NUM_CHUNKS="${3:-$DEFAULT_CHUNKS}"
 
-CHUNK_DIR="${DATA_DIR}/logs/gdc_chunks"
+CHUNK_DIR="${META_DIR}/GDC_meta/manifests/manifest_chunks"
 
 # Validate inputs
 if [[ ! -f "$MANIFEST" ]]; then
