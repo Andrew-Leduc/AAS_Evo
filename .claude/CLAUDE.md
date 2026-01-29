@@ -35,6 +35,8 @@ AAS_Evo/                              # This repo
 ├── scripts/
 │   ├── download/
 │   │   ├── gdc/
+│   │   │   ├── submit_download.sh    # Split manifest & submit chunk jobs
+│   │   │   ├── download_chunk.sh     # Single-chunk SLURM download job
 │   │   │   ├── download.py           # GDC download via gdc-client
 │   │   │   ├── fetch_metadata.py     # Fetch sample metadata from GDC API
 │   │   │   └── filter_wxs_manifest.py # Filter manifest to WXS BAMs only
@@ -60,7 +62,8 @@ AAS_Evo_meta/
 │   ├── gdc_manifest.*.txt            # Full GDC manifest from portal
 │   ├── manifest_wxs_bams.tsv         # Filtered to WXS BAMs
 │   ├── gdc_meta.tsv                  # Enriched metadata (from API)
-│   └── gdc_meta_matched.tsv          # Pruned to matched samples only
+│   ├── gdc_meta_matched.tsv          # Pruned to matched samples only
+│   └── gdc-user-token_AL.txt         # GDC access token (controlled data)
 ├── PDC_meta/
 │   ├── {tissue}/                     # Per-tissue folders (LSCC, LUAD, etc.)
 │   │   ├── PDC_file_manifest_*.csv   # Raw file info + download URLs
@@ -80,10 +83,10 @@ AAS_Evo_meta/
 ├── RAW/                              # PDC RAW files
 ├── VCF/                              # Variant calls (from BAM processing)
 ├── VEP/                              # VEP annotations + missense tables
-├── ref/                              # Reference files
-│   ├── hg38.fa                       # Human reference genome
+├── SEQ_FILES/                        # Reference files
+│   ├── hg38.fa                       # Human reference genome (GRCh38, UCSC)
 │   ├── hg38.fa.fai                   # Reference index
-│   └── cds.bed                       # CDS regions (speeds up variant calling)
+│   └── cds.chr.bed                   # CDS regions (GENCODE, chr-prefixed)
 ├── bam_list.txt                      # List of BAM paths for array jobs
 ├── vcf_list.txt                      # List of VCF paths for VEP
 └── logs/                             # SLURM job logs
@@ -125,11 +128,12 @@ python scripts/download/mapping_report.py
 
 ### 4. Download Data (Cluster)
 ```bash
-# PDC RAW files
+# PDC RAW files (single SLURM job, rate-limited)
 sbatch scripts/download/pdc/submit_download.sh
 
-# GDC BAM files (requires gdc-client + token for controlled access)
-python scripts/download/gdc/download.py -m manifest.txt -t token.txt
+# GDC BAM files (splits manifest into 20 chunks, submits each as SLURM job)
+# Run on login node, not via sbatch
+bash scripts/download/gdc/submit_download.sh
 ```
 
 ### 5. Process BAM Files (Variant Calling)
@@ -164,7 +168,7 @@ bash scripts/proc_bams/consolidate_missense.sh
 The BAM processing pipeline extracts missense mutations for multi-omics integration:
 
 1. **Variant Calling** (`submit_variant_call.sh`)
-   - Uses bcftools mpileup/call on CDS regions only (via `-R cds.bed`)
+   - Uses bcftools mpileup/call on CDS regions only (via `-R cds.chr.bed`)
    - Filters: QUAL≥20, depth≥10
    - Outputs VCF + TSV with VAF per sample
 
@@ -209,3 +213,45 @@ Missing from PDC (no proteomics): Stomach, some Kidney cases
 
 ### GDC Metadata
 `file_id`, `file_name`, `case_submitter_id`, `sample_type`, `tissue_type`, `primary_site`, `disease_type`, `project_id`
+
+## Reference File Acquisition
+
+Reference files are stored in `/scratch/leduc.an/AAS_Evo/SEQ_FILES/`.
+
+### Human Reference Genome (hg38.fa)
+Source: UCSC Genome Browser (uses `chr` prefix matching GDC BAM alignments)
+```bash
+wget https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz
+gunzip hg38.fa.gz
+samtools faidx hg38.fa
+```
+
+### CDS Regions BED (cds.chr.bed)
+Source: GENCODE annotation (human gene annotations, coding sequences only)
+```bash
+wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.annotation.gtf.gz
+zcat gencode.v46.annotation.gtf.gz \
+    | awk '$3 == "CDS" {print $1"\t"$4-1"\t"$5}' \
+    | sort -k1,1 -k2,2n \
+    | bedtools merge > cds.chr.bed
+```
+
+### VEP Container and Cache
+```bash
+# Ensembl VEP Apptainer image
+apptainer pull ensembl-vep.sif docker://ensemblorg/ensembl-vep
+# VEP cache (offline mode)
+mkdir -p cache && cd cache
+apptainer exec ensembl-vep.sif vep_install --AUTO c --ASSEMBLY GRCh38 --SPECIES homo_sapiens
+```
+Stored at `/scratch/leduc.an/tools/vep/`
+
+## GDC Download Details
+
+The GDC download uses `gdc-client` for controlled-access data (requires dbGaP authorization).
+
+- Manifest is split into ~20 sub-manifests and submitted as separate SLURM jobs
+- Each chunk runs on `short` partition with 24-hour time limit
+- `gdc-client` auto-skips already-downloaded files (resumable)
+- Token file: `gdc-user-token_AL.txt` (expires periodically, re-download from GDC portal)
+- Each BAM is downloaded into its own UUID subdirectory under `BAMS/`

@@ -28,8 +28,8 @@ set -euo pipefail
 
 # --------- PATHS ----------
 BAM_LIST="/scratch/leduc.an/AAS_Evo/bam_list.txt"
-REF="/scratch/leduc.an/AAS_Evo/ref/hg38.fa"
-CDS_BED="/scratch/leduc.an/AAS_Evo/ref/cds.bed"  # Coding regions only (speeds up ~10x)
+REF="/scratch/leduc.an/AAS_Evo/SEQ_FILES/hg38.fa"
+CDS_BED="/scratch/leduc.an/AAS_Evo/SEQ_FILES/cds.chr.bed"  # Coding regions only (speeds up ~10x)
 OUTDIR="/scratch/leduc.an/AAS_Evo/VCF"
 MIN_DP=10
 # --------------------------

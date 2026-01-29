@@ -28,7 +28,7 @@ set -euo pipefail
 VCF_LIST="/scratch/leduc.an/AAS_Evo/vcf_list.txt"
 SIF="/scratch/leduc.an/tools/vep/ensembl-vep.sif"
 VEP_CACHE="/scratch/leduc.an/tools/vep/cache"
-FASTA="/scratch/leduc.an/AAS_Evo/ref/hg38.fa"
+FASTA="/scratch/leduc.an/AAS_Evo/SEQ_FILES/hg38.fa"
 OUTDIR="/scratch/leduc.an/AAS_Evo/VEP"
 # --------------------------
 
