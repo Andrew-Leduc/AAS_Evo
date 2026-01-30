@@ -21,10 +21,17 @@ AAS_Evo/
 │   │   │   ├── download.py           # PDC download (rate-limited)
 │   │   │   └── consolidate_metadata.py
 │   │   └── mapping_report.py         # GDC-PDC sample matching
-│   └── proc_bams/
-│       ├── submit_variant_call.sh    # SLURM array: variant calling
-│       ├── submit_vep.sh             # SLURM array: VEP annotation
-│       └── consolidate_missense.sh   # Merge missense mutations
+│   ├── proc_bams/
+│   │   ├── submit_variant_call.sh    # SLURM array: variant calling
+│   │   ├── submit_vep.sh             # SLURM array: VEP annotation
+│   │   ├── consolidate_missense.sh   # Merge missense mutations
+│   │   ├── make_cds_gene_bed.sh      # One-time: gene-annotated CDS BED
+│   │   ├── submit_cds_coverage.sh    # SLURM array: per-gene coverage
+│   │   └── consolidate_coverage.sh   # Merge coverage reports
+│   └── proteogenomics/
+│       ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
+│       ├── combine_plex_fastas.py    # Combine by TMT plex
+│       └── submit_proteogenomics.sh  # SLURM wrapper
 └── .claude/
     └── CLAUDE.md                     # Detailed project context
 ```
@@ -40,7 +47,13 @@ AAS_Evo/
 ├── SEQ_FILES/         # Reference files
 │   ├── hg38.fa        # Human reference genome (GRCh38)
 │   ├── hg38.fa.fai    # Reference index
-│   └── cds.chr.bed    # CDS regions for targeted variant calling
+│   ├── cds.chr.bed    # CDS regions for targeted variant calling
+│   ├── cds_genes.bed  # CDS regions with gene names (for coverage)
+│   └── uniprot_human_canonical.fasta  # UniProt reviewed proteome
+├── FASTA/             # Custom proteogenomics FASTAs
+│   ├── per_sample/    # Per-sample mutant entries
+│   └── per_plex/      # Reference + plex-specific mutants
+├── coverage/          # Per-gene WXS coverage reports
 └── logs/              # SLURM job logs
 ```
 
@@ -77,6 +90,35 @@ bash scripts/proc_bams/consolidate_missense.sh
 ```
 
 **Final output** (`all_missense_mutations.tsv`): sample_id, genomic position, gene symbol, protein change (HGVSp), amino acid swap, gnomAD population frequency, variant allele frequency.
+
+### 3. WXS Coverage Assessment
+
+```bash
+# One-time: create gene-annotated CDS BED from GENCODE GTF
+bash scripts/proc_bams/make_cds_gene_bed.sh
+
+# Per-sample per-gene coverage
+NUM_BAMS=$(wc -l < /scratch/leduc.an/AAS_Evo/bam_list.txt)
+sbatch --array=1-${NUM_BAMS}%10 scripts/proc_bams/submit_cds_coverage.sh
+
+# Consolidate: identifies genes with poor coverage across samples
+bash scripts/proc_bams/consolidate_coverage.sh
+```
+
+Reports which genes have sufficient sequencing depth for variant calling. Genes with <80% of CDS bases at ≥10x are flagged as `LOW_COVERAGE`.
+
+### 4. Proteogenomics FASTA Generation
+
+```bash
+# One-time: download UniProt reference proteome
+wget -O /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
+    "https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=%28organism_id%3A9606%29+AND+%28reviewed%3Atrue%29"
+
+# Generate per-sample mutant FASTAs + per-TMT-plex search databases
+sbatch scripts/proteogenomics/submit_proteogenomics.sh
+```
+
+Creates custom MS search databases: reference proteome + sample-specific missense mutations, combined per TMT plex. Links VEP output → GDC UUID → TMT plex via sample metadata.
 
 ## Reference Files
 

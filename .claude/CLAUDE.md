@@ -46,12 +46,19 @@ AAS_Evo/                              # This repo
 │   │   │   ├── submit_download.sh    # SLURM job wrapper
 │   │   │   └── download_files.sh     # Alternative bash downloader
 │   │   └── mapping_report.py         # GDC-PDC sample matching & pruning
-│   └── proc_bams/                    # BAM processing pipeline
-│       ├── submit_variant_call.sh    # SLURM array job for variant calling
-│       ├── submit_vep.sh             # SLURM array job for VEP annotation
-│       ├── consolidate_missense.sh   # Merge all missense mutations
-│       ├── align_and_variant_call.sh # Single-sample test script
-│       └── run_vep.sh                # Single-sample VEP test
+│   ├── proc_bams/                    # BAM processing pipeline
+│   │   ├── submit_variant_call.sh    # SLURM array job for variant calling
+│   │   ├── submit_vep.sh             # SLURM array job for VEP annotation
+│   │   ├── consolidate_missense.sh   # Merge all missense mutations
+│   │   ├── make_cds_gene_bed.sh      # One-time: gene-annotated CDS BED
+│   │   ├── submit_cds_coverage.sh    # SLURM array: per-gene coverage
+│   │   ├── consolidate_coverage.sh   # Merge coverage reports
+│   │   ├── align_and_variant_call.sh # Single-sample test script
+│   │   └── run_vep.sh                # Single-sample VEP test
+│   └── proteogenomics/               # Custom FASTA generation
+│       ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
+│       ├── combine_plex_fastas.py    # Combine by TMT plex
+│       └── submit_proteogenomics.sh  # SLURM wrapper
 └── utils/
 ```
 
@@ -86,7 +93,16 @@ AAS_Evo_meta/
 ├── SEQ_FILES/                        # Reference files
 │   ├── hg38.fa                       # Human reference genome (GRCh38, UCSC)
 │   ├── hg38.fa.fai                   # Reference index
-│   └── cds.chr.bed                   # CDS regions (GENCODE, chr-prefixed)
+│   ├── cds.chr.bed                   # CDS regions (merged, GENCODE)
+│   ├── cds_genes.bed                 # CDS regions with gene names
+│   └── uniprot_human_canonical.fasta # UniProt reviewed proteome
+├── FASTA/                            # Custom proteogenomics FASTAs
+│   ├── per_sample/                   # {uuid}_mutant.fasta (mutants only)
+│   └── per_plex/                     # {run_metadata_id}.fasta (ref + mutants)
+├── coverage/                         # Per-gene WXS coverage reports
+│   ├── {uuid}.gene_coverage.tsv      # Per-sample per-gene coverage
+│   ├── sample_summary.tsv            # Overall CDS coverage per sample
+│   └── poorly_covered_genes.tsv      # Genes with frequent low coverage
 ├── bam_list.txt                      # List of BAM paths for array jobs
 ├── vcf_list.txt                      # List of VCF paths for VEP
 └── logs/                             # SLURM job logs
@@ -163,6 +179,29 @@ bash scripts/proc_bams/consolidate_missense.sh
 # Output: /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv
 ```
 
+### 8. Assess WXS Coverage of Protein-Coding Genome
+```bash
+# One-time: create gene-annotated CDS BED
+bash scripts/proc_bams/make_cds_gene_bed.sh
+
+# Per-sample per-gene coverage (uses same bam_list.txt)
+NUM_BAMS=$(wc -l < /scratch/leduc.an/AAS_Evo/bam_list.txt)
+sbatch --array=1-${NUM_BAMS}%10 scripts/proc_bams/submit_cds_coverage.sh
+
+# Consolidate into summary reports
+bash scripts/proc_bams/consolidate_coverage.sh
+```
+
+### 9. Generate Custom Proteogenomics FASTAs
+```bash
+# One-time: download UniProt reference proteome
+wget -O /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
+    "https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=%28organism_id%3A9606%29+AND+%28reviewed%3Atrue%29"
+
+# Generate per-sample mutant FASTAs + per-plex search databases
+sbatch scripts/proteogenomics/submit_proteogenomics.sh
+```
+
 ## BAM Processing Pipeline Details
 
 The BAM processing pipeline extracts missense mutations for multi-omics integration:
@@ -186,6 +225,33 @@ The BAM processing pipeline extracts missense mutations for multi-omics integrat
    - `Amino_acids`: R/H format
    - `gnomAD_AF`: Population frequency
    - `VAF`: Variant allele frequency in sample
+
+## Proteogenomics Pipeline Details
+
+Generates custom protein FASTA search databases with sample-specific missense mutations.
+
+1. **Per-sample mutant FASTAs** (`generate_mutant_fastas.py`)
+   - Parses VEP `SYMBOL` column → looks up gene in UniProt via `GN=` header field
+   - Parses mutation from `HGVSp` (e.g., `p.Arg273His`) or falls back to `Amino_acids` + `Protein_position`
+   - Validates reference AA at position before substituting
+   - Headers: `>mut|P04637|TP53_R273H OS=Homo sapiens GN=TP53`
+   - Multiple mutations in same gene → separate entries (standard SAV approach)
+   - Logs issues to `generation_summary.tsv` and `generation_issues.tsv`
+
+2. **Per-plex FASTAs** (`combine_plex_fastas.py`)
+   - Linking: `run_metadata_id` → `case_submitter_id` (via TMT map) → GDC UUID (via GDC meta) → mutant FASTA
+   - Each plex FASTA = full reference proteome + deduplicated mutant entries from all plex samples
+   - Deduplication by mutation identity (accession + mutation label)
+
+3. **Reference proteome**: UniProt reviewed human canonical (~20,400 proteins, ~25MB)
+
+## WXS Coverage Assessment
+
+Reports per-gene sequencing coverage to identify where mutations could be missed:
+- `make_cds_gene_bed.sh`: One-time script creates gene-annotated CDS BED from GENCODE GTF
+- `submit_cds_coverage.sh`: SLURM array job, per-sample per-gene coverage via `samtools depth`
+- `consolidate_coverage.sh`: Merges into summary + flags genes with <80% bases at ≥10x
+- Output: `poorly_covered_genes.tsv` lists genes frequently under-sequenced across samples
 
 ## PDC Download Script Details
 
@@ -234,6 +300,20 @@ zcat gencode.v46.annotation.gtf.gz \
     | awk '$3 == "CDS" {print $1"\t"$4-1"\t"$5}' \
     | sort -k1,1 -k2,2n \
     | bedtools merge > cds.chr.bed
+```
+
+### UniProt Reference Proteome (uniprot_human_canonical.fasta)
+Source: UniProt reviewed (Swiss-Prot) human canonical sequences
+```bash
+wget -O uniprot_human_canonical.fasta \
+    "https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=%28organism_id%3A9606%29+AND+%28reviewed%3Atrue%29"
+```
+~25MB, ~20,400 proteins. Headers contain `GN=GENE_SYMBOL` used for VEP→protein mapping.
+
+### Gene-Annotated CDS BED (cds_genes.bed)
+Generated from GENCODE GTF (same source as cds.chr.bed but retains gene names):
+```bash
+bash scripts/proc_bams/make_cds_gene_bed.sh
 ```
 
 ### VEP Container and Cache
