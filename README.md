@@ -24,14 +24,14 @@ AAS_Evo/
 │   ├── proc_bams/
 │   │   ├── submit_variant_call.sh    # SLURM array: variant calling
 │   │   ├── submit_vep.sh             # SLURM array: VEP annotation
-│   │   ├── consolidate_missense.sh   # Merge missense mutations
-│   │   ├── make_cds_gene_bed.sh      # One-time: gene-annotated CDS BED
-│   │   ├── submit_cds_coverage.sh    # SLURM array: per-gene coverage
-│   │   └── consolidate_coverage.sh   # Merge coverage reports
-│   └── proteogenomics/
-│       ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
-│       ├── combine_plex_fastas.py    # Combine by TMT plex
-│       └── submit_proteogenomics.sh  # SLURM wrapper
+│   │   └── consolidate_missense.sh   # Merge missense mutations
+│   ├── proteogenomics/
+│   │   ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
+│   │   ├── combine_plex_fastas.py    # Combine by TMT plex
+│   │   └── submit_proteogenomics.sh  # SLURM wrapper
+│   └── chunk_workflow/
+│       ├── setup_chunks.sh           # Split manifest into 500-BAM chunks
+│       └── process_chunk.sh          # Per-chunk download/process/cleanup
 └── .claude/
     └── CLAUDE.md                     # Detailed project context
 ```
@@ -48,23 +48,30 @@ AAS_Evo/
 │   ├── hg38.fa        # Human reference genome (GRCh38)
 │   ├── hg38.fa.fai    # Reference index
 │   ├── cds.chr.bed    # CDS regions for targeted variant calling
-│   ├── cds_genes.bed  # CDS regions with gene names (for coverage)
 │   └── uniprot_human_canonical.fasta  # UniProt reviewed proteome
 ├── FASTA/             # Custom proteogenomics FASTAs
 │   ├── per_sample/    # Per-sample mutant entries
 │   └── per_plex/      # Reference + plex-specific mutants
-├── coverage/          # Per-gene WXS coverage reports
 └── logs/              # SLURM job logs
 ```
 
 ## Workflows
 
-### 1. Data Download
+### 1. Data Download (Chunked)
 
-**GDC BAM files** (controlled access, requires dbGaP approval):
+BAMs are processed in chunks of ~500 to stay within storage limits:
+
 ```bash
-# On login node - splits manifest into 20 chunks, submits each as a SLURM job
-bash scripts/download/gdc/submit_download.sh
+# One-time: split manifest into chunks
+bash scripts/chunk_workflow/setup_chunks.sh
+
+# For each chunk (repeat for 1, 2, 3, ...):
+bash scripts/chunk_workflow/process_chunk.sh 1 download     # Download BAMs
+bash scripts/chunk_workflow/process_chunk.sh 1 prep-calls   # Write bam_list.txt
+# ... run variant calling (command printed by prep-calls) ...
+bash scripts/chunk_workflow/process_chunk.sh 1 prep-vep     # Write vcf_list.txt
+# ... run VEP (command printed by prep-vep) ...
+bash scripts/chunk_workflow/process_chunk.sh 1 cleanup       # Delete BAMs, keep VCF/VEP
 ```
 
 **PDC RAW files** (open access):
@@ -74,40 +81,22 @@ sbatch scripts/download/pdc/submit_download.sh
 
 ### 2. BAM Processing Pipeline
 
+Variant calling and VEP annotation are managed per-chunk via `process_chunk.sh` (see above). The underlying SLURM scripts:
+
 ```bash
-# Step 1: Variant calling (CDS regions only)
-find /scratch/leduc.an/AAS_Evo/BAMS -name "*.bam" > /scratch/leduc.an/AAS_Evo/bam_list.txt
-NUM_BAMS=$(wc -l < /scratch/leduc.an/AAS_Evo/bam_list.txt)
+# Variant calling (CDS regions only) — reads from bam_list.txt
 sbatch --array=1-${NUM_BAMS}%10 scripts/proc_bams/submit_variant_call.sh
 
-# Step 2: VEP annotation (with gnomAD frequencies)
-ls /scratch/leduc.an/AAS_Evo/VCF/*.vcf.gz > /scratch/leduc.an/AAS_Evo/vcf_list.txt
-NUM_VCFS=$(wc -l < /scratch/leduc.an/AAS_Evo/vcf_list.txt)
+# VEP annotation (with gnomAD frequencies) — reads from vcf_list.txt
 sbatch --array=1-${NUM_VCFS}%10 scripts/proc_bams/submit_vep.sh
 
-# Step 3: Consolidate all missense mutations
+# After ALL chunks: consolidate all missense mutations
 bash scripts/proc_bams/consolidate_missense.sh
 ```
 
 **Final output** (`all_missense_mutations.tsv`): sample_id, genomic position, gene symbol, protein change (HGVSp), amino acid swap, gnomAD population frequency, variant allele frequency.
 
-### 3. WXS Coverage Assessment
-
-```bash
-# One-time: create gene-annotated CDS BED from GENCODE GTF
-bash scripts/proc_bams/make_cds_gene_bed.sh
-
-# Per-sample per-gene coverage
-NUM_BAMS=$(wc -l < /scratch/leduc.an/AAS_Evo/bam_list.txt)
-sbatch --array=1-${NUM_BAMS}%10 scripts/proc_bams/submit_cds_coverage.sh
-
-# Consolidate: identifies genes with poor coverage across samples
-bash scripts/proc_bams/consolidate_coverage.sh
-```
-
-Reports which genes have sufficient sequencing depth for variant calling. Genes with <80% of CDS bases at ≥10x are flagged as `LOW_COVERAGE`.
-
-### 4. Proteogenomics FASTA Generation
+### 3. Proteogenomics FASTA Generation
 
 ```bash
 # One-time: download UniProt reference proteome
