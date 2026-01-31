@@ -15,23 +15,22 @@ AAS_Evo/
 │   │   │   ├── download_chunk.sh     # Single-chunk SLURM download job
 │   │   │   ├── download.py           # GDC download via gdc-client
 │   │   │   ├── fetch_metadata.py     # Fetch sample metadata from GDC API
-│   │   │   └── filter_wxs_manifest.py
+│   │   │   ├── filter_wxs_manifest.py
+│   │   │   └── setup_chunks.sh       # Split manifest into 500-BAM chunks
 │   │   ├── pdc/
 │   │   │   ├── submit_download.sh    # SLURM job wrapper
 │   │   │   ├── download.py           # PDC download (rate-limited)
 │   │   │   └── consolidate_metadata.py
 │   │   └── mapping_report.py         # GDC-PDC sample matching
 │   ├── proc_bams/
+│   │   ├── run_pipeline.sh           # Wrapper: auto-generates file lists + submits jobs
 │   │   ├── submit_variant_call.sh    # SLURM array: variant calling
 │   │   ├── submit_vep.sh             # SLURM array: VEP annotation
 │   │   └── consolidate_missense.sh   # Merge missense mutations
-│   ├── proteogenomics/
-│   │   ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
-│   │   ├── combine_plex_fastas.py    # Combine by TMT plex
-│   │   └── submit_proteogenomics.sh  # SLURM wrapper
-│   └── chunk_workflow/
-│       ├── setup_chunks.sh           # Split manifest into 500-BAM chunks
-│       └── process_chunk.sh          # Per-chunk download/process/cleanup
+│   └── proteogenomics/
+│       ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
+│       ├── combine_plex_fastas.py    # Combine by TMT plex
+│       └── submit_proteogenomics.sh  # SLURM wrapper
 └── .claude/
     └── CLAUDE.md                     # Detailed project context
 ```
@@ -59,19 +58,14 @@ AAS_Evo/
 
 ### 1. Data Download (Chunked)
 
-BAMs are processed in chunks of ~500 to stay within storage limits:
+BAMs are downloaded in chunks of ~500 to stay within storage limits:
 
 ```bash
 # One-time: split manifest into chunks
-bash scripts/chunk_workflow/setup_chunks.sh
+bash scripts/download/gdc/setup_chunks.sh
 
-# For each chunk (repeat for 1, 2, 3, ...):
-bash scripts/chunk_workflow/process_chunk.sh 1 download     # Download BAMs
-bash scripts/chunk_workflow/process_chunk.sh 1 prep-calls   # Write bam_list.txt
-# ... run variant calling (command printed by prep-calls) ...
-bash scripts/chunk_workflow/process_chunk.sh 1 prep-vep     # Write vcf_list.txt
-# ... run VEP (command printed by prep-vep) ...
-bash scripts/chunk_workflow/process_chunk.sh 1 cleanup       # Delete BAMs, keep VCF/VEP
+# Per chunk (repeat for each chunk manifest):
+bash scripts/download/gdc/submit_download.sh path/to/chunk_00.tsv
 ```
 
 **PDC RAW files** (open access):
@@ -81,18 +75,23 @@ sbatch scripts/download/pdc/submit_download.sh
 
 ### 2. BAM Processing Pipeline
 
-Variant calling and VEP annotation are managed per-chunk via `process_chunk.sh` (see above). The underlying SLURM scripts:
+Processes all BAMs currently in `BAMS/`, outputs to `VCF/` and `VEP/`:
 
 ```bash
-# Variant calling (CDS regions only) — reads from bam_list.txt
-sbatch --array=1-${NUM_BAMS}%10 scripts/proc_bams/submit_variant_call.sh
+# Step 1: Variant calling (finds BAMs automatically)
+bash scripts/proc_bams/run_pipeline.sh variant-call
 
-# VEP annotation (with gnomAD frequencies) — reads from vcf_list.txt
-sbatch --array=1-${NUM_VCFS}%10 scripts/proc_bams/submit_vep.sh
+# Step 2: VEP annotation (finds VCFs automatically)
+bash scripts/proc_bams/run_pipeline.sh vep
 
-# After ALL chunks: consolidate all missense mutations
+# Step 3: Delete BAMs, download next chunk, repeat
+rm -rf /scratch/leduc.an/AAS_Evo/BAMS/*
+
+# After ALL chunks: consolidate missense mutations
 bash scripts/proc_bams/consolidate_missense.sh
 ```
+
+VCF/VEP outputs persist across chunks. Both scripts skip already-processed samples.
 
 **Final output** (`all_missense_mutations.tsv`): sample_id, genomic position, gene symbol, protein change (HGVSp), amino acid swap, gnomAD population frequency, variant allele frequency.
 

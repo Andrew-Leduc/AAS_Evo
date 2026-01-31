@@ -35,11 +35,12 @@ AAS_Evo/                              # This repo
 ├── scripts/
 │   ├── download/
 │   │   ├── gdc/
-│   │   │   ├── submit_download.sh    # Split manifest & submit chunk jobs
+│   │   │   ├── submit_download.sh    # Split manifest & submit SLURM jobs
 │   │   │   ├── download_chunk.sh     # Single-chunk SLURM download job
 │   │   │   ├── download.py           # GDC download via gdc-client
 │   │   │   ├── fetch_metadata.py     # Fetch sample metadata from GDC API
-│   │   │   └── filter_wxs_manifest.py # Filter manifest to WXS BAMs only
+│   │   │   ├── filter_wxs_manifest.py # Filter manifest to WXS BAMs only
+│   │   │   └── setup_chunks.sh       # Split manifest into 500-BAM chunks
 │   │   ├── pdc/
 │   │   │   ├── download.py           # PDC download (streaming, rate-limited)
 │   │   │   ├── consolidate_metadata.py # Merge per-tissue PDC manifests
@@ -47,19 +48,16 @@ AAS_Evo/                              # This repo
 │   │   │   └── download_files.sh     # Alternative bash downloader
 │   │   └── mapping_report.py         # GDC-PDC sample matching & pruning
 │   ├── proc_bams/                    # BAM processing pipeline
+│   │   ├── run_pipeline.sh           # Wrapper: auto-generates file lists + submits jobs
 │   │   ├── submit_variant_call.sh    # SLURM array job for variant calling
 │   │   ├── submit_vep.sh             # SLURM array job for VEP annotation
 │   │   ├── consolidate_missense.sh   # Merge all missense mutations
 │   │   ├── align_and_variant_call.sh # Single-sample test script
 │   │   └── run_vep.sh                # Single-sample VEP test
-│   ├── staging/                      # Future scripts (coverage assessment, etc.)
-│   ├── proteogenomics/               # Custom FASTA generation
-│   │   ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
-│   │   ├── combine_plex_fastas.py    # Combine by TMT plex
-│   │   └── submit_proteogenomics.sh  # SLURM wrapper
-│   └── chunk_workflow/               # Chunked BAM processing
-│       ├── setup_chunks.sh           # Split manifest into 500-BAM chunks
-│       └── process_chunk.sh          # Per-chunk download/process/cleanup
+│   └── proteogenomics/               # Custom FASTA generation
+│       ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
+│       ├── combine_plex_fastas.py    # Combine by TMT plex
+│       └── submit_proteogenomics.sh  # SLURM wrapper
 └── utils/
 ```
 
@@ -145,17 +143,19 @@ VCF/VEP outputs persist across chunks; only BAMs are deleted between chunks.
 
 ```bash
 # One-time: split manifest into 500-BAM chunks
-bash scripts/chunk_workflow/setup_chunks.sh
+bash scripts/download/gdc/setup_chunks.sh
 
-# Per chunk (repeat for N = 1, 2, 3, ...):
-bash scripts/chunk_workflow/process_chunk.sh N download     # Submit download job
-bash scripts/chunk_workflow/process_chunk.sh N prep-calls   # Write bam_list.txt
-NUM_BAMS=$(wc -l < /scratch/leduc.an/AAS_Evo/bam_list.txt)
-sbatch --array=1-${NUM_BAMS}%10 scripts/proc_bams/submit_variant_call.sh
-bash scripts/chunk_workflow/process_chunk.sh N prep-vep     # Write vcf_list.txt
-NUM_VCFS=$(wc -l < /scratch/leduc.an/AAS_Evo/vcf_list.txt)
-sbatch --array=1-${NUM_VCFS}%10 scripts/proc_bams/submit_vep.sh
-bash scripts/chunk_workflow/process_chunk.sh N cleanup       # Delete BAMs
+# Per chunk (repeat for each chunk manifest):
+bash scripts/download/gdc/submit_download.sh path/to/chunk_00.tsv
+
+# Step 1: Variant calling (finds BAMs automatically)
+bash scripts/proc_bams/run_pipeline.sh variant-call
+
+# Step 2: VEP annotation (finds VCFs automatically)
+bash scripts/proc_bams/run_pipeline.sh vep
+
+# Step 3: Delete BAMs, download next chunk, repeat
+rm -rf /scratch/leduc.an/AAS_Evo/BAMS/*
 ```
 
 PDC RAW files (separate, not chunked):
@@ -292,13 +292,12 @@ Stored at `/scratch/leduc.an/tools/vep/`
 
 ## Chunk Workflow Details
 
-The chunk workflow processes BAMs in batches of ~500 to stay within scratch storage limits.
+BAMs are processed in batches of ~500 to stay within scratch storage limits.
 
-- `setup_chunks.sh` splits the GDC manifest into persistent chunk files at `META_DIR/GDC_meta/manifests/chunks/chunk_NN.tsv`
-- `process_chunk.sh N <action>` orchestrates each chunk through download → variant calling → VEP → cleanup
-- Chunk manifests are valid GDC format (with header), usable directly by `download_chunk.sh`
-- `prep-calls` and `prep-vep` write to the shared `bam_list.txt` / `vcf_list.txt` (existing files backed up)
-- `cleanup` verifies VCF output exists before deleting each BAM directory
+- `setup_chunks.sh` (in `download/gdc/`) splits the GDC manifest into persistent chunk files at `META_DIR/GDC_meta/manifests/chunks/chunk_NN.tsv`
+- Chunk manifests are valid GDC format (with header), usable directly by `submit_download.sh`
+- `run_pipeline.sh` (in `proc_bams/`) auto-generates file lists and submits SLURM array jobs for variant calling and VEP
+- Both `submit_variant_call.sh` and `submit_vep.sh` have skip-if-done logic, so re-running is safe
 - VCF/VEP outputs accumulate across chunks; `consolidate_missense.sh` and proteogenomics scripts run once after all chunks
 
 ## GDC Download Details

@@ -3,12 +3,12 @@
 # Split the GDC manifest into persistent chunks for sequential processing.
 #
 # Each chunk is a valid GDC manifest (with header) that can be passed directly
-# to download_chunk.sh. This avoids downloading all ~2K BAMs at once.
+# to submit_download.sh. This avoids downloading all ~2K BAMs at once.
 #
 # Usage:
-#   bash scripts/chunk_workflow/setup_chunks.sh            # 500 BAMs per chunk
-#   bash scripts/chunk_workflow/setup_chunks.sh 300         # custom chunk size
-#   bash scripts/chunk_workflow/setup_chunks.sh 500 /path/to/manifest.tsv
+#   bash scripts/download/gdc/setup_chunks.sh            # 500 BAMs per chunk
+#   bash scripts/download/gdc/setup_chunks.sh 300         # custom chunk size
+#   bash scripts/download/gdc/setup_chunks.sh 500 /path/to/manifest.tsv
 #
 
 set -euo pipefail
@@ -79,13 +79,11 @@ done
 echo ""
 echo "Chunks written to: $CHUNK_DIR"
 echo ""
-echo "To process chunk 1:"
-echo "  bash scripts/chunk_workflow/process_chunk.sh 1"
+echo "To download chunk 1:"
+echo "  bash scripts/download/gdc/submit_download.sh ${CHUNK_DIR}/chunk_00.tsv"
 echo ""
 echo "Workflow per chunk:"
-echo "  1. process_chunk.sh N download    # Download BAMs"
-echo "  2. process_chunk.sh N prep-calls  # Write bam_list.txt"
-echo "  3. sbatch variant calling         # (command printed by prep-calls)"
-echo "  4. process_chunk.sh N prep-vep    # Write vcf_list.txt"
-echo "  5. sbatch VEP annotation          # (command printed by prep-vep)"
-echo "  6. process_chunk.sh N cleanup     # Delete BAMs, keep VCF/VEP"
+echo "  1. bash scripts/download/gdc/submit_download.sh <chunk.tsv>"
+echo "  2. bash scripts/proc_bams/run_pipeline.sh variant-call"
+echo "  3. bash scripts/proc_bams/run_pipeline.sh vep"
+echo "  4. rm -rf /scratch/leduc.an/AAS_Evo/BAMS/*"
