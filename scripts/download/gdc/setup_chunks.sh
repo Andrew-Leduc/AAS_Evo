@@ -15,7 +15,7 @@ set -euo pipefail
 
 # --------- PATHS ----------
 META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo_meta"
-DEFAULT_MANIFEST="${META_DIR}/GDC_meta/manifest_wxs_bams.tsv"
+DEFAULT_MANIFEST="${META_DIR}/GDC_meta/manifests/manifest_wxs_bams.tsv"
 CHUNK_DIR="${META_DIR}/GDC_meta/manifests/chunks"
 # ---------------------------
 
