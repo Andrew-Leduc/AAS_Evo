@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=8G
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=4G
 #SBATCH --time=4:00:00
 #SBATCH --partition=short
 #SBATCH --job-name=var_call
@@ -21,7 +21,7 @@
 #   NUM_BAMS=$(wc -l < /scratch/leduc.an/AAS_Evo/bam_list.txt)
 #   sbatch --array=1-${NUM_BAMS}%10 submit_variant_call.sh
 #
-# The %10 limits to 10 concurrent jobs to avoid overloading the cluster.
+# The %10 limits to 10 concurrent jobs.
 #
 
 set -euo pipefail
@@ -62,6 +62,7 @@ base=$(basename "$BAM" .bam)
 
 LOG="$OUTDIR/${SAMPLE_ID}.log"
 VCF_GZ="$OUTDIR/${SAMPLE_ID}.vcf.gz"
+VCF_TMP="$OUTDIR/${SAMPLE_ID}.vcf.gz.tmp"
 TSV="$OUTDIR/${SAMPLE_ID}.variants.tsv"
 
 # Skip if already processed
@@ -70,6 +71,9 @@ if [[ -f "$VCF_GZ" && -f "${VCF_GZ}.tbi" ]]; then
     exit 0
 fi
 
+# Clean up any partial output from a previous failed run
+rm -f "$VCF_GZ" "${VCF_GZ}.tbi" "$VCF_TMP" "$TSV"
+
 echo "[$(date)] Processing: $SAMPLE_ID" | tee "$LOG"
 echo "[$(date)] BAM: $BAM" | tee -a "$LOG"
 echo "[$(date)] Task ID: ${SLURM_ARRAY_TASK_ID}" | tee -a "$LOG"
@@ -77,7 +81,7 @@ echo "[$(date)] Task ID: ${SLURM_ARRAY_TASK_ID}" | tee -a "$LOG"
 # Ensure BAM is indexed
 if [[ ! -f "${BAM}.bai" && ! -f "${BAM%.bam}.bai" ]]; then
     echo "[$(date)] Indexing BAM..." | tee -a "$LOG"
-    samtools index -@ 4 "$BAM" 2>>"$LOG"
+    samtools index -@ 2 "$BAM" 2>>"$LOG"
 fi
 
 # Check reference
@@ -96,6 +100,7 @@ echo "[$(date)] Calling variants with bcftools (CDS regions only)..." | tee -a "
 
 # Call variants -> compressed VCF
 # -R restricts to CDS regions only (much faster for WXS data)
+# Write to temp file first; move to final path only on success
 bcftools mpileup \
     -f "$REF" \
     -R "$CDS_BED" \
@@ -110,9 +115,11 @@ bcftools mpileup \
     -Ou \
     -i "QUAL>=20 && FORMAT/DP>=${MIN_DP}" 2>>"$LOG" \
 | bcftools view \
-    -Oz -o "$VCF_GZ" 2>>"$LOG"
+    -Oz -o "$VCF_TMP" 2>>"$LOG"
 
-bcftools index -t "$VCF_GZ" 2>>"$LOG"
+bcftools index -t "$VCF_TMP" 2>>"$LOG"
+mv "$VCF_TMP" "$VCF_GZ"
+mv "${VCF_TMP}.tbi" "${VCF_GZ}.tbi"
 
 echo "[$(date)] Writing TSV..." | tee -a "$LOG"
 
