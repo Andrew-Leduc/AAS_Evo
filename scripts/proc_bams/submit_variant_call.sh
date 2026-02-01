@@ -114,7 +114,7 @@ bcftools mpileup \
 | bcftools filter \
     -Ou \
     -i "QUAL>=20 && FORMAT/DP>=${MIN_DP}" 2>>"$LOG" \
-| bcftools view \
+| bcftools sort \
     -Oz -o "$VCF_TMP" 2>>"$LOG"
 
 bcftools index -t "$VCF_TMP" 2>>"$LOG"
