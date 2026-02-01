@@ -119,14 +119,19 @@ gunzip hg38.fa.gz
 samtools faidx hg38.fa
 ```
 
-**CDS regions (GENCODE)**:
+**CDS regions (GENCODE)** — GENCODE uses `chr` prefixes matching GDC BAMs:
 ```bash
 wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.annotation.gtf.gz
+
+# Extract CDS, filter to standard chromosomes, sort, merge overlapping intervals
 zcat gencode.v46.annotation.gtf.gz \
     | awk '$3 == "CDS" {print $1"\t"$4-1"\t"$5}' \
+    | grep -E '^chr([0-9]+|X|Y|M)\b' \
     | sort -k1,1 -k2,2n \
-    | bedtools merge > cds.chr.bed
+    | bedtools merge \
+    > cds.chr.bed
 ```
+The grep removes alt/patch contigs not in GDC BAMs. The merge is required — without it, overlapping CDS intervals cause bcftools mpileup to emit unsorted positions.
 
 ## Requirements
 

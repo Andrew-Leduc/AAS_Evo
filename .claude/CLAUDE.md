@@ -263,14 +263,21 @@ samtools faidx hg38.fa
 ```
 
 ### CDS Regions BED (cds.chr.bed)
-Source: GENCODE annotation (human gene annotations, coding sequences only)
+Source: GENCODE annotation (human gene annotations, coding sequences only).
+GENCODE uses `chr` prefixes (chr1, chr2, ...) matching the UCSC hg38 reference and GDC BAM alignments.
 ```bash
 wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.annotation.gtf.gz
+
+# Extract CDS regions, filter to standard chromosomes, sort, and merge overlapping intervals
 zcat gencode.v46.annotation.gtf.gz \
     | awk '$3 == "CDS" {print $1"\t"$4-1"\t"$5}' \
+    | grep -E '^chr([0-9]+|X|Y|M)\b' \
     | sort -k1,1 -k2,2n \
-    | bedtools merge > cds.chr.bed
+    | bedtools merge \
+    > cds.chr.bed
 ```
+The `grep` step removes alt/patch contigs (chrUn, chrGL, chrKI) not present in GDC BAMs.
+The `bedtools merge` step is critical — without it, overlapping CDS intervals cause `bcftools mpileup -R` to emit unsorted positions.
 
 ### UniProt Reference Proteome (uniprot_human_canonical.fasta)
 Source: UniProt reviewed (Swiss-Prot) human canonical sequences
