@@ -54,10 +54,15 @@ AAS_Evo/                              # This repo
 │   │   ├── consolidate_missense.sh   # Merge all missense mutations
 │   │   ├── align_and_variant_call.sh # Single-sample test script
 │   │   └── run_vep.sh                # Single-sample VEP test
-│   └── proteogenomics/               # Custom FASTA generation
-│       ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
-│       ├── combine_plex_fastas.py    # Combine by TMT plex
-│       └── submit_proteogenomics.sh  # SLURM wrapper
+│   ├── fasta_gen/                    # Custom proteogenomics FASTAs
+│   │   ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
+│   │   ├── combine_plex_fastas.py    # Combine by TMT plex
+│   │   └── submit_proteogenomics.sh  # SLURM wrapper for FASTA generation
+│   └── mutation_analysis/            # MSA generation & coevolution
+│       ├── generate_msas.py          # MSA generation via MMseqs2
+│       ├── submit_msa_generation.sh  # SLURM array: one gene per task
+│       ├── coevolution_analysis.py   # MI+APC covariation & compensatory prediction
+│       └── submit_coevolution.sh     # SLURM wrapper for coevolution analysis
 └── utils/
 ```
 
@@ -93,12 +98,16 @@ AAS_Evo_meta/
 │   ├── hg38.fa                       # Human reference genome (GRCh38, UCSC)
 │   ├── hg38.fa.fai                   # Reference index
 │   ├── cds.chr.bed                   # CDS regions (merged, GENCODE)
-│   └── uniprot_human_canonical.fasta # UniProt reviewed proteome
+│   ├── uniprot_human_canonical.fasta # UniProt reviewed proteome
+│   └── uniref90                      # MMseqs2 UniRef90 database
 ├── FASTA/                            # Custom proteogenomics FASTAs
 │   ├── per_sample/                   # {uuid}_mutant.fasta (mutants only)
 │   └── per_plex/                     # {run_metadata_id}.fasta (ref + mutants)
+├── MSA/                              # Per-gene MSAs ({accession}.a3m)
+├── COEVOL/                           # Coevolution analysis output
 ├── bam_list.txt                      # List of BAM paths for array jobs
 ├── vcf_list.txt                      # List of VCF paths for VEP
+├── gene_list.txt                     # Genes needing MSAs (for array job)
 └── logs/                             # SLURM job logs
 ```
 
@@ -177,7 +186,35 @@ wget -O /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
     "https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=%28organism_id%3A9606%29+AND+%28reviewed%3Atrue%29"
 
 # Generate per-sample mutant FASTAs + per-plex search databases
-sbatch scripts/proteogenomics/submit_proteogenomics.sh
+sbatch scripts/fasta_gen/submit_proteogenomics.sh
+```
+
+### 7. Generate MSAs for Coevolution Analysis
+```bash
+# One-time: download and index UniRef90 (~28 GB compressed, ~60 GB database)
+wget -O uniref90.fasta.gz \
+    https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref90/uniref90.fasta.gz
+mmseqs createdb uniref90.fasta.gz /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniref90
+
+# Generate gene list (genes with mutations that need MSAs)
+python3 scripts/mutation_analysis/generate_msas.py --make-gene-list \
+    --vep-tsv /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv \
+    --msa-dir /scratch/leduc.an/AAS_Evo/MSA \
+    --ref-fasta /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
+    -o /scratch/leduc.an/AAS_Evo/gene_list.txt
+
+# Submit MSA generation (SLURM array, one gene per task)
+NUM_GENES=$(wc -l < /scratch/leduc.an/AAS_Evo/gene_list.txt)
+sbatch --array=1-${NUM_GENES}%10 scripts/mutation_analysis/submit_msa_generation.sh
+```
+
+### 8. Coevolution Analysis (Compensatory Prediction)
+```bash
+# After MSA generation completes:
+sbatch scripts/mutation_analysis/submit_coevolution.sh
+
+# Or limit to specific genes:
+sbatch scripts/mutation_analysis/submit_coevolution.sh TP53 BRCA1
 ```
 
 ## BAM Processing Pipeline Details
@@ -222,6 +259,37 @@ Generates custom protein FASTA search databases with sample-specific missense mu
    - Deduplication by mutation identity (accession + mutation label)
 
 3. **Reference proteome**: UniProt reviewed human canonical (~20,400 proteins, ~25MB)
+
+## MSA Generation & Coevolution Pipeline Details
+
+Predicts compensatory translation errors: given a destabilizing missense mutation at position i, finds covarying positions j via MI+APC and predicts which amino acid substitution at j could compensate.
+
+### MSA Generation (`generate_msas.py`)
+
+Two modes in one script:
+
+1. **`--make-gene-list` mode**: Reads VEP mutations → filters to genes with UniProt entries → excludes genes with existing MSAs → writes gene list file
+2. **Default mode**: Called by SLURM array job. Reads gene from list by index, extracts protein sequence from UniProt FASTA, runs MMseqs2 (`createdb` → `search` → `result2msa` → `unpackdb`), outputs `{accession}.a3m`
+
+MSA files are named by UniProt accession (e.g., `P04637.a3m`). The gene list uses gene symbols from VEP; `build_gene_to_msa_map()` in the analysis script handles the mapping. Pre-existing MSAs named by gene symbol, accession, or entry name are all auto-detected.
+
+MMseqs2 search parameters: 3 iterations, sensitivity 7.5, against UniRef90. Resources: 4 CPUs, 32G RAM, 4h per gene.
+
+### Coevolution Analysis (`coevolution_analysis.py`)
+
+For each gene with both mutations and an MSA:
+1. Read MSA → numpy int8 array (N sequences x L columns, 0-19 for AAs, -1 for gaps)
+2. Compute Neff (effective sequence count, identity threshold 0.8) → skip if < 50
+3. Compute MI+APC matrix (L x L coupling scores). Memory-efficient: one (20,20) pair table at a time
+4. For each mutation at position i: find top-k covarying positions j, compute conditional P(b at j | mut_aa at i), rank by preference shift vs wildtype baseline
+5. Output predictions TSV
+
+Pluggable backend via `CouplingBackend` class — MI+APC is default (pure numpy). Future: EVcouplings/plmDCA, MSA Transformer.
+
+**Output columns** (`compensatory_predictions.tsv`):
+`gene`, `uniprot_accession`, `mutation`, `mutation_hgvsp`, `n_samples`, `covarying_pos`, `wildtype_aa`, `predicted_compensatory_aa`, `coupling_score`, `conditional_score`, `preference_shift`, `neff`, `msa_depth`
+
+**Additional outputs**: `_summary.tsv` (per-gene stats), `_skipped.tsv` (genes excluded with reasons)
 
 ## PDC Download Script Details
 
@@ -286,6 +354,18 @@ wget -O uniprot_human_canonical.fasta \
     "https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=%28organism_id%3A9606%29+AND+%28reviewed%3Atrue%29"
 ```
 ~25MB, ~20,400 proteins. Headers contain `GN=GENE_SYMBOL` used for VEP→protein mapping.
+
+### UniRef90 Database (for MSA generation)
+Source: UniProt Reference Clusters at 90% identity
+```bash
+# Download FASTA (~28 GB compressed)
+wget -O uniref90.fasta.gz \
+    https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref90/uniref90.fasta.gz
+
+# Build MMseqs2 database (~60 GB on disk)
+mmseqs createdb uniref90.fasta.gz SEQ_FILES/uniref90
+```
+Used by `generate_msas.py` for MSA generation via MMseqs2 profile search.
 
 ### VEP Container and Cache
 ```bash

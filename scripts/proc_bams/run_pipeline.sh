@@ -80,7 +80,7 @@ do_variant_call() {
     mkdir -p "$VCF_DIR"
     mkdir -p "${DATA_DIR}/logs"
 
-    sbatch --array=1-${NUM_BAMS}%10 "${SCRIPTS_DIR}/submit_variant_call.sh"
+    sbatch --array=1-${NUM_BAMS}%20 "${SCRIPTS_DIR}/submit_variant_call.sh"
 
     echo ""
     echo "Monitor with: squeue -u \$USER -n var_call"
@@ -134,7 +134,7 @@ do_vep() {
     mkdir -p "$VEP_DIR"
     mkdir -p "${DATA_DIR}/logs"
 
-    sbatch --array=1-${NUM_VCFS}%10 "${SCRIPTS_DIR}/submit_vep.sh"
+    sbatch --array=1-${NUM_VCFS}%20 "${SCRIPTS_DIR}/submit_vep.sh"
 
     echo ""
     echo "Monitor with: squeue -u \$USER -n vep"

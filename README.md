@@ -27,10 +27,15 @@ AAS_Evo/
 │   │   ├── submit_variant_call.sh    # SLURM array: variant calling
 │   │   ├── submit_vep.sh             # SLURM array: VEP annotation
 │   │   └── consolidate_missense.sh   # Merge missense mutations
-│   └── proteogenomics/
-│       ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
-│       ├── combine_plex_fastas.py    # Combine by TMT plex
-│       └── submit_proteogenomics.sh  # SLURM wrapper
+│   ├── fasta_gen/                    # Custom proteogenomics FASTAs
+│   │   ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
+│   │   ├── combine_plex_fastas.py    # Combine by TMT plex
+│   │   └── submit_proteogenomics.sh  # SLURM wrapper for FASTA generation
+│   └── mutation_analysis/            # MSA generation & coevolution
+│       ├── generate_msas.py          # MSA generation via MMseqs2
+│       ├── submit_msa_generation.sh  # SLURM array: one gene per task
+│       ├── coevolution_analysis.py   # MI+APC covariation & compensatory prediction
+│       └── submit_coevolution.sh     # SLURM wrapper for coevolution analysis
 └── .claude/
     └── CLAUDE.md                     # Detailed project context
 ```
@@ -51,6 +56,8 @@ AAS_Evo/
 ├── FASTA/             # Custom proteogenomics FASTAs
 │   ├── per_sample/    # Per-sample mutant entries
 │   └── per_plex/      # Reference + plex-specific mutants
+├── MSA/               # Per-gene multiple sequence alignments (A3M)
+├── COEVOL/            # Coevolution analysis output
 └── logs/              # SLURM job logs
 ```
 
@@ -103,10 +110,37 @@ wget -O /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
     "https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=%28organism_id%3A9606%29+AND+%28reviewed%3Atrue%29"
 
 # Generate per-sample mutant FASTAs + per-TMT-plex search databases
-sbatch scripts/proteogenomics/submit_proteogenomics.sh
+sbatch scripts/fasta_gen/submit_proteogenomics.sh
 ```
 
 Creates custom MS search databases: reference proteome + sample-specific missense mutations, combined per TMT plex. Links VEP output → GDC UUID → TMT plex via sample metadata.
+
+### 4. MSA Generation & Coevolution Analysis
+
+Predicts compensatory translation errors: given a destabilizing missense mutation, finds covarying positions via MI+APC and predicts which amino acid substitution could compensate.
+
+```bash
+# One-time: download and index UniRef90 (~28 GB compressed)
+wget -O uniref90.fasta.gz \
+    https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref90/uniref90.fasta.gz
+mmseqs createdb uniref90.fasta.gz /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniref90
+
+# Step 1: Generate gene list (genes with mutations that need MSAs)
+python3 scripts/mutation_analysis/generate_msas.py --make-gene-list \
+    --vep-tsv /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv \
+    --msa-dir /scratch/leduc.an/AAS_Evo/MSA \
+    --ref-fasta /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
+    -o /scratch/leduc.an/AAS_Evo/gene_list.txt
+
+# Step 2: Generate MSAs (SLURM array, one gene per task)
+NUM_GENES=$(wc -l < /scratch/leduc.an/AAS_Evo/gene_list.txt)
+sbatch --array=1-${NUM_GENES}%10 scripts/mutation_analysis/submit_msa_generation.sh
+
+# Step 3: Run coevolution analysis (after MSA jobs complete)
+sbatch scripts/mutation_analysis/submit_coevolution.sh
+```
+
+MSA files are named by UniProt accession (`P04637.a3m`). The gene list uses gene symbols from VEP; the scripts handle the mapping. Pre-existing MSAs (named by gene, accession, or entry name) are auto-detected and skipped.
 
 ## Reference Files
 
@@ -135,11 +169,12 @@ The grep removes alt/patch contigs not in GDC BAMs. The merge is required — wi
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.8+, numpy
 - `gdc-client` (GDC Data Transfer Tool)
 - `samtools`, `bcftools` (variant calling)
 - Ensembl VEP via Apptainer (annotation)
 - `bedtools` (for generating CDS BED, if needed)
+- `mmseqs2` (MSA generation)
 
 ## Data Sources
 
