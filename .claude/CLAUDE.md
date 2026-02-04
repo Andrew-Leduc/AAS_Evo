@@ -51,9 +51,7 @@ AAS_Evo/                              # This repo
 │   │   ├── run_pipeline.sh           # Wrapper: auto-generates file lists + submits jobs
 │   │   ├── submit_variant_call.sh    # SLURM array job for variant calling
 │   │   ├── submit_vep.sh             # SLURM array job for VEP annotation
-│   │   ├── consolidate_missense.sh   # Merge all missense mutations
-│   │   ├── align_and_variant_call.sh # Single-sample test script
-│   │   └── run_vep.sh                # Single-sample VEP test
+│   │   └── consolidate_missense.sh   # Merge all missense mutations
 │   ├── fasta_gen/                    # Custom proteogenomics FASTAs
 │   │   ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
 │   │   ├── combine_plex_fastas.py    # Combine by TMT plex

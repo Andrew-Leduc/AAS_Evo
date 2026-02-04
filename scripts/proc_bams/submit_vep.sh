@@ -66,7 +66,7 @@ fi
 echo "[$(date)] Running VEP on: $SAMPLE_ID" | tee "$LOG"
 
 # Run VEP with gnomAD frequencies
-# --af_gnomad adds gnomAD allele frequencies
+# --af_gnomade adds gnomAD exome allele frequencies (VEP 115+ field name)
 # --pick selects one consequence per variant (canonical preferred)
 apptainer exec \
     -B "${VEP_CACHE}":/cache \
@@ -82,9 +82,9 @@ apptainer exec \
         --assembly GRCh38 --offline \
         --fasta "/ref/$(basename "$FASTA")" \
         --symbol --hgvs --protein --canonical \
-        --af_gnomad \
+        --af_gnomade \
         --pick \
-        --fields "Consequence,SYMBOL,Gene,BIOTYPE,HGVSc,HGVSp,Protein_position,Amino_acids,Codons,gnomAD_AF" \
+        --fields "Consequence,SYMBOL,Gene,BIOTYPE,HGVSc,HGVSp,Protein_position,Amino_acids,Codons,gnomADe_AF" \
         --fork 8 \
         --warning_file "/output/${SAMPLE_ID}.vep.warnings.txt" \
         2>&1 | tee -a "$LOG"
@@ -94,7 +94,7 @@ echo "[$(date)] Extracting missense variants..." | tee -a "$LOG"
 # Extract missense variants to TSV
 # Parse VEP annotations from VCF INFO field
 {
-    echo -e "sample_id\tCHROM\tPOS\tREF\tALT\tConsequence\tSYMBOL\tGene\tHGVSp\tAmino_acids\tProtein_position\tgnomAD_AF\tDP\tAD_ref\tAD_alt\tVAF"
+    echo -e "sample_id\tCHROM\tPOS\tREF\tALT\tConsequence\tSYMBOL\tGene\tHGVSp\tAmino_acids\tProtein_position\tgnomADe_AF\tDP\tAD_ref\tAD_alt\tVAF"
 
     zcat "$VEP_OUT" 2>/dev/null | grep -v "^#" | awk -v sid="$SAMPLE_ID" -F'\t' '
     BEGIN { OFS="\t" }
