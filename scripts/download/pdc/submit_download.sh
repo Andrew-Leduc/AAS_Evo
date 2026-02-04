@@ -23,7 +23,7 @@
 set -e
 
 # Load Python module (required on compute nodes)
-module load python/3.8.1
+module load python/3.8.1 2>/dev/null || true
 
 # Project paths
 SCRIPTS_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo"

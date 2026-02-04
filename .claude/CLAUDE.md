@@ -64,10 +64,12 @@ AAS_Evo/                              # This repo
 │   │   ├── submit_msa_generation.sh  # SLURM array: one gene per task
 │   │   ├── coevolution_analysis.py   # MI+APC covariation & compensatory prediction
 │   │   └── submit_coevolution.sh     # SLURM wrapper for coevolution analysis
-│   └── ms_search/                    # FragPipe MS database search
-│       ├── generate_manifests.py     # Per-plex FragPipe manifests + TMT annotations
-│       ├── submit_fragpipe.sh        # SLURM array: one plex per task
-│       └── run_ms_search.sh          # Orchestrator: generate manifests + submit
+│   ├── ms_search/                    # FragPipe MS database search
+│   │   ├── generate_manifests.py     # Per-plex FragPipe manifests + TMT annotations
+│   │   ├── submit_fragpipe.sh        # SLURM array: one plex per task
+│   │   └── run_ms_search.sh          # Orchestrator: generate manifests + submit
+│   └── setup/
+│       └── setup_seq_files.sh        # Download all external reference files
 └── utils/
 ```
 
@@ -166,7 +168,17 @@ python scripts/download/mapping_report.py
 # Creates: gdc_meta_matched.tsv, pdc_all_files_matched.tsv
 ```
 
-### 4. Download & Process BAMs (Chunked)
+### 4. Download Reference Files (One-Time Setup)
+```bash
+# Downloads and indexes all external reference files (~100 GB total):
+# hg38.fa, cds.chr.bed, UniProt proteome, AlphaMissense, UniRef90, VEP container
+sbatch scripts/setup/setup_seq_files.sh
+
+# Or skip large files (UniRef90, VEP) for initial testing:
+bash scripts/setup/setup_seq_files.sh --skip-large
+```
+
+### 5. Download & Process BAMs (Chunked)
 
 BAMs are processed in chunks of ~500 to stay within scratch storage limits.
 VCF/VEP outputs persist across chunks; only BAMs are deleted between chunks.
@@ -193,7 +205,7 @@ PDC RAW files (separate, not chunked):
 sbatch scripts/download/pdc/submit_download.sh
 ```
 
-### 5. Consolidate & Filter Mutations
+### 6. Consolidate & Filter Mutations
 ```bash
 # After ALL BAM chunks are processed:
 bash scripts/proc_bams/consolidate_missense.sh
@@ -207,19 +219,14 @@ python3 scripts/mutation_analysis/filter_and_rank.py \
 # Output: ANALYSIS/top_5000_mutations.tsv, ANALYSIS/gene_list_for_msa.txt
 ```
 
-### 6. Generate MSAs for Coevolution Analysis
+### 7. Generate MSAs for Coevolution Analysis
 ```bash
-# One-time: download and index UniRef90 (~28 GB compressed, ~60 GB database)
-wget -O uniref90.fasta.gz \
-    https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref90/uniref90.fasta.gz
-mmseqs createdb uniref90.fasta.gz /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniref90
-
 # Submit MSA generation (auto-finds gene list from ANALYSIS/)
 NUM_GENES=$(wc -l < /scratch/leduc.an/AAS_Evo/ANALYSIS/gene_list_for_msa.txt)
 sbatch --array=1-${NUM_GENES}%10 scripts/mutation_analysis/submit_msa_generation.sh
 ```
 
-### 7. Coevolution Analysis (Compensatory Prediction)
+### 8. Coevolution Analysis (Compensatory Prediction)
 ```bash
 # After MSA generation completes (auto-finds gene list from ANALYSIS/):
 sbatch scripts/mutation_analysis/submit_coevolution.sh
@@ -229,18 +236,16 @@ sbatch scripts/mutation_analysis/submit_coevolution.sh TP53 BRCA1
 # Output: COEVOL/compensatory_predictions.tsv
 ```
 
-### 8. Generate Compensatory FASTAs
+### 9. Generate Compensatory FASTAs
 ```bash
 # After coevolution analysis completes:
 sbatch scripts/fasta_gen/submit_compensatory_fastas.sh
 # Output: FASTA/compensatory/all_compensatory.fasta
 ```
 
-### 9. Generate Custom Proteogenomics FASTAs
+### 10. Generate Custom Proteogenomics FASTAs
 ```bash
-# One-time: download UniProt reference proteome
-wget -O /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
-    "https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=%28organism_id%3A9606%29+AND+%28reviewed%3Atrue%29"
+# Prerequisites: reference proteome downloaded (included in setup_seq_files.sh)
 
 # Generate per-sample mutant FASTAs + per-plex search databases
 # Automatically includes compensatory entries if FASTA/compensatory/ exists
@@ -248,7 +253,7 @@ sbatch scripts/fasta_gen/submit_proteogenomics.sh
 # Output: FASTA/per_plex/{run_metadata_id}.fasta (ref + mut + comp per plex)
 ```
 
-### 10. MS Database Search (FragPipe)
+### 11. MS Database Search (FragPipe)
 ```bash
 # Set up per-plex manifests and submit FragPipe searches
 # Option A: provide a FragPipe workflow template (auto-patches FASTA path per plex)
@@ -433,12 +438,12 @@ The `grep` step removes alt/patch contigs (chrUn, chrGL, chrKI) not present in G
 The `bedtools merge` step is critical — without it, overlapping CDS intervals cause `bcftools mpileup -R` to emit unsorted positions.
 
 ### UniProt Reference Proteome (uniprot_human_canonical.fasta)
-Source: UniProt reviewed (Swiss-Prot) human canonical sequences
+Source: UniProt reference proteome UP000005640 (reviewed/Swiss-Prot, canonical only)
 ```bash
 wget -O uniprot_human_canonical.fasta \
-    "https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=%28organism_id%3A9606%29+AND+%28reviewed%3Atrue%29"
+    "https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=%28proteome%3AUP000005640%29+AND+%28reviewed%3Atrue%29"
 ```
-~25MB, ~20,400 proteins. Headers contain `GN=GENE_SYMBOL` used for VEP→protein mapping.
+~25MB, ~20,400 proteins. One canonical protein per gene. Headers contain `GN=GENE_SYMBOL` used for VEP SYMBOL → protein mapping.
 
 ### UniRef90 Database (for MSA generation)
 Source: UniProt Reference Clusters at 90% identity

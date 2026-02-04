@@ -39,10 +39,12 @@ AAS_Evo/
 │   │   ├── generate_compensatory_fastas.py # Compensatory mutation FASTAs
 │   │   ├── submit_compensatory_fastas.sh   # SLURM wrapper
 │   │   └── submit_proteogenomics.sh  # SLURM wrapper for FASTA generation
-│   └── ms_search/                    # FragPipe MS database search
-│       ├── generate_manifests.py     # Per-plex FragPipe manifests + TMT annotations
-│       ├── submit_fragpipe.sh        # SLURM array: one plex per task
-│       └── run_ms_search.sh          # Orchestrator: generate manifests + submit
+│   ├── ms_search/                    # FragPipe MS database search
+│   │   ├── generate_manifests.py     # Per-plex FragPipe manifests + TMT annotations
+│   │   ├── submit_fragpipe.sh        # SLURM array: one plex per task
+│   │   └── run_ms_search.sh          # Orchestrator: generate manifests + submit
+│   └── setup/
+│       └── setup_seq_files.sh        # Download all external reference files
 └── .claude/
     └── CLAUDE.md                     # Detailed project context
 ```
@@ -95,7 +97,21 @@ FragPipe MS Search (per plex)
 
 ## Workflows
 
-### 1. Data Download (Chunked)
+### 1. Reference File Setup (One-Time)
+
+Downloads and indexes all external reference files (~100 GB total):
+
+```bash
+# As SLURM job (recommended for large downloads):
+sbatch scripts/setup/setup_seq_files.sh
+
+# Or skip large files (UniRef90, VEP) for initial testing:
+bash scripts/setup/setup_seq_files.sh --skip-large
+```
+
+Downloads: hg38 genome, GENCODE CDS regions, UniProt canonical proteome, AlphaMissense data, UniRef90 database, and VEP container + cache.
+
+### 2. Data Download (Chunked)
 
 BAMs are downloaded in chunks of ~500 to stay within storage limits:
 
@@ -112,7 +128,7 @@ bash scripts/download/gdc/submit_download.sh path/to/chunk_00.tsv
 sbatch scripts/download/pdc/submit_download.sh
 ```
 
-### 2. BAM Processing Pipeline
+### 3. BAM Processing Pipeline
 
 Processes all BAMs currently in `BAMS/`, outputs to `VCF/` and `VEP/`:
 
@@ -131,7 +147,7 @@ VCF/VEP outputs persist across chunks. Both scripts skip already-processed sampl
 
 **Final output** (`all_missense_mutations.tsv`, 18 columns): sample_id, genomic position, consequence, gene symbol, protein change (HGVSp), amino acid swap, gnomADe_AF, AlphaMissense pathogenicity + class, read depths, VAF.
 
-### 3. Consolidate & Filter Mutations
+### 4. Consolidate & Filter Mutations
 
 ```bash
 # After ALL chunks are processed: merge per-sample VEP TSVs
@@ -146,14 +162,9 @@ python3 scripts/mutation_analysis/filter_and_rank.py \
 
 Output: `ANALYSIS/top_5000_mutations.tsv`, `ANALYSIS/gene_list_for_msa.txt` (used automatically by downstream steps).
 
-### 4. MSA Generation
+### 5. MSA Generation
 
 ```bash
-# One-time: download and index UniRef90 (~28 GB compressed)
-wget -O uniref90.fasta.gz \
-    https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref90/uniref90.fasta.gz
-mmseqs createdb uniref90.fasta.gz /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniref90
-
 # Submit MSA generation (auto-finds gene list from ANALYSIS/)
 NUM_GENES=$(wc -l < /scratch/leduc.an/AAS_Evo/ANALYSIS/gene_list_for_msa.txt)
 sbatch --array=1-${NUM_GENES}%10 scripts/mutation_analysis/submit_msa_generation.sh
@@ -161,7 +172,7 @@ sbatch --array=1-${NUM_GENES}%10 scripts/mutation_analysis/submit_msa_generation
 
 MSA files named by UniProt accession (`P04637.a3m`). Pre-existing MSAs are auto-detected and skipped.
 
-### 5. Coevolution Analysis
+### 6. Coevolution Analysis
 
 Predicts compensatory translation errors: given a destabilizing missense mutation, finds covarying positions via MI+APC and predicts which amino acid substitution could compensate.
 
@@ -172,7 +183,7 @@ sbatch scripts/mutation_analysis/submit_coevolution.sh
 
 Output: `COEVOL/compensatory_predictions.tsv`
 
-### 6. Generate Compensatory FASTAs
+### 7. Generate Compensatory FASTAs
 
 ```bash
 # After coevolution analysis completes:
@@ -181,7 +192,7 @@ sbatch scripts/fasta_gen/submit_compensatory_fastas.sh
 
 Output: `FASTA/compensatory/all_compensatory.fasta` — each entry contains both the original destabilizing mutation and the predicted compensatory substitution applied to the reference protein.
 
-### 7. Proteogenomics FASTA Generation
+### 8. Proteogenomics FASTA Generation
 
 ```bash
 # Generate per-sample mutant FASTAs + per-plex search databases
@@ -191,7 +202,7 @@ sbatch scripts/fasta_gen/submit_proteogenomics.sh
 
 Creates custom MS search databases per TMT plex: reference proteome + plex-specific observed mutations + plex-specific compensatory entries. Compensatory headers include patient IDs and tumor/normal status.
 
-### 8. MS Database Search (FragPipe)
+### 9. MS Database Search (FragPipe)
 
 ```bash
 # Set up per-plex manifests and submit FragPipe searches
@@ -208,32 +219,16 @@ Each plex is searched independently (different custom FASTA per plex). All fract
 
 ## Reference Files
 
-Reference files stored in `/scratch/leduc.an/AAS_Evo/SEQ_FILES/`. To reproduce:
+All reference files are downloaded and indexed by `scripts/setup/setup_seq_files.sh`. They live in `/scratch/leduc.an/AAS_Evo/SEQ_FILES/`:
 
-**Human reference genome (hg38)**:
-```bash
-wget https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz
-gunzip hg38.fa.gz
-samtools faidx hg38.fa
-```
-
-**CDS regions (GENCODE)** — GENCODE uses `chr` prefixes matching GDC BAMs:
-```bash
-wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.annotation.gtf.gz
-zcat gencode.v46.annotation.gtf.gz \
-    | awk '$3 == "CDS" {print $1"\t"$4-1"\t"$5}' \
-    | grep -E '^chr([0-9]+|X|Y|M)\b' \
-    | sort -k1,1 -k2,2n \
-    | bedtools merge \
-    > cds.chr.bed
-```
-
-**AlphaMissense data** (for VEP plugin):
-```bash
-wget -O AlphaMissense_hg38.tsv.gz \
-    "https://storage.googleapis.com/dm_alphamissense/AlphaMissense_hg38.tsv.gz"
-tabix -s 1 -b 2 -e 2 -S 1 AlphaMissense_hg38.tsv.gz
-```
+| File | Source | Size |
+|------|--------|------|
+| `hg38.fa` + `.fai` | UCSC Genome Browser (chr-prefix, matching GDC BAMs) | ~3 GB |
+| `cds.chr.bed` | GENCODE v46 CDS regions (merged, standard chromosomes) | ~2 MB |
+| `uniprot_human_canonical.fasta` | UniProt reference proteome UP000005640 (reviewed, canonical) | ~25 MB |
+| `AlphaMissense_hg38.tsv.gz` + `.tbi` | DeepMind AlphaMissense pathogenicity predictions | ~6 GB |
+| `uniref90` (MMseqs2 db) | UniProt Reference Clusters at 90% identity | ~60 GB |
+| VEP container + cache | Ensembl VEP Apptainer image | ~15 GB |
 
 ## Requirements
 

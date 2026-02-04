@@ -17,9 +17,7 @@
 #
 # Prerequisites:
 #   - VEP annotation completed (*.vep.tsv files in VEP/)
-#   - Reference proteome downloaded:
-#     wget -O /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
-#       "https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=%28organism_id%3A9606%29+AND+%28reviewed%3Atrue%29"
+#   - Reference proteome downloaded (or run: bash scripts/setup/setup_seq_files.sh)
 #
 # Usage:
 #   sbatch submit_proteogenomics.sh
@@ -40,7 +38,7 @@ TMT_MAP="${META_DIR}/PDC_meta/pdc_file_tmt_map.tsv"
 GDC_META="${META_DIR}/GDC_meta/gdc_meta_matched.tsv"
 # --------------------------
 
-module load python/3.8.1
+module load python/3.8.1 2>/dev/null || true
 
 mkdir -p "${FASTA_DIR}/per_sample"
 mkdir -p "${FASTA_DIR}/per_plex"

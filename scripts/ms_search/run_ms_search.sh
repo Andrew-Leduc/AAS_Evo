@@ -38,7 +38,7 @@ SEARCH_DIR="${DATA_DIR}/MS_SEARCH"
 
 WORKFLOW_TEMPLATE="${1:-}"
 
-module load python/3.8.1
+module load python/3.8.1 2>/dev/null || true
 
 echo "========================================="
 echo "MS Search Pipeline Setup"

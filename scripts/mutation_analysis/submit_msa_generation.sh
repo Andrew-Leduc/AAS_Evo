@@ -45,7 +45,7 @@ MSA_DIR="${DATA_DIR}/MSA"
 TMP_DIR="${DATA_DIR}/tmp/msa_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 # --------------------------
 
-module load python/3.8.1
+module load python/3.8.1 2>/dev/null || true
 module load mmseqs2 2>/dev/null || true
 export PATH="$HOME/bin/mmseqs/bin:$PATH"
 

@@ -47,7 +47,7 @@ fi
 OUT_DIR="${DATA_DIR}/COEVOL"
 # --------------------------
 
-module load python/3.8.1
+module load python/3.8.1 2>/dev/null || true
 
 mkdir -p "$OUT_DIR"
 mkdir -p "${DATA_DIR}/logs"
