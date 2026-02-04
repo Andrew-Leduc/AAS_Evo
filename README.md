@@ -24,18 +24,25 @@ AAS_Evo/
 │   │   └── mapping_report.py         # GDC-PDC sample matching
 │   ├── proc_bams/
 │   │   ├── run_pipeline.sh           # Wrapper: auto-generates file lists + submits jobs
-│   │   ├── submit_variant_call.sh    # SLURM array: variant calling
-│   │   ├── submit_vep.sh             # SLURM array: VEP annotation
+│   │   ├── submit_variant_call.sh    # SLURM array: variant calling + mapping QC
+│   │   ├── submit_vep.sh             # SLURM array: VEP annotation + AlphaMissense
 │   │   └── consolidate_missense.sh   # Merge missense mutations
+│   ├── mutation_analysis/            # Filtering, MSA generation & coevolution
+│   │   ├── filter_and_rank.py        # Rank mutations by composite pathogenicity score
+│   │   ├── generate_msas.py          # MSA generation via MMseqs2
+│   │   ├── submit_msa_generation.sh  # SLURM array: one gene per task
+│   │   ├── coevolution_analysis.py   # MI+APC covariation & compensatory prediction
+│   │   └── submit_coevolution.sh     # SLURM wrapper for coevolution analysis
 │   ├── fasta_gen/                    # Custom proteogenomics FASTAs
 │   │   ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
-│   │   ├── combine_plex_fastas.py    # Combine by TMT plex
+│   │   ├── combine_plex_fastas.py    # Combine by TMT plex (ref + mut + comp)
+│   │   ├── generate_compensatory_fastas.py # Compensatory mutation FASTAs
+│   │   ├── submit_compensatory_fastas.sh   # SLURM wrapper
 │   │   └── submit_proteogenomics.sh  # SLURM wrapper for FASTA generation
-│   └── mutation_analysis/            # MSA generation & coevolution
-│       ├── generate_msas.py          # MSA generation via MMseqs2
-│       ├── submit_msa_generation.sh  # SLURM array: one gene per task
-│       ├── coevolution_analysis.py   # MI+APC covariation & compensatory prediction
-│       └── submit_coevolution.sh     # SLURM wrapper for coevolution analysis
+│   └── ms_search/                    # FragPipe MS database search
+│       ├── generate_manifests.py     # Per-plex FragPipe manifests + TMT annotations
+│       ├── submit_fragpipe.sh        # SLURM array: one plex per task
+│       └── run_ms_search.sh          # Orchestrator: generate manifests + submit
 └── .claude/
     └── CLAUDE.md                     # Detailed project context
 ```
@@ -45,20 +52,45 @@ AAS_Evo/
 ```
 /scratch/leduc.an/AAS_Evo/
 ├── BAMS/              # GDC BAM files (by UUID subdirectory)
-├── RAW/               # PDC RAW files
+├── RAW/               # PDC RAW files (flattened)
 ├── VCF/               # Variant calls from BAM processing
 ├── VEP/               # VEP annotations + missense tables
 ├── SEQ_FILES/         # Reference files
 │   ├── hg38.fa        # Human reference genome (GRCh38)
-│   ├── hg38.fa.fai    # Reference index
 │   ├── cds.chr.bed    # CDS regions for targeted variant calling
-│   └── uniprot_human_canonical.fasta  # UniProt reviewed proteome
+│   ├── uniprot_human_canonical.fasta  # UniProt reviewed proteome
+│   ├── uniref90       # MMseqs2 UniRef90 database
+│   └── AlphaMissense_hg38.tsv.gz     # AlphaMissense pathogenicity data
+├── ANALYSIS/          # Mutation filtering & ranking output
 ├── FASTA/             # Custom proteogenomics FASTAs
 │   ├── per_sample/    # Per-sample mutant entries
-│   └── per_plex/      # Reference + plex-specific mutants
+│   ├── per_plex/      # Reference + plex-specific mutants + compensatory
+│   └── compensatory/  # Predicted compensatory mutation entries
 ├── MSA/               # Per-gene multiple sequence alignments (A3M)
 ├── COEVOL/            # Coevolution analysis output
+├── MS_SEARCH/         # FragPipe MS search setup & results
+│   ├── manifests/     # Per-plex .fp-manifest files
+│   ├── annotations/   # Per-plex TMT channel annotations
+│   └── results/       # Per-plex FragPipe output
 └── logs/              # SLURM job logs
+```
+
+## Pipeline Overview
+
+```
+Download BAMs → Variant Call → VEP (+ AlphaMissense) → Consolidate
+    ↓
+Filter & Rank Mutations (top 5000)
+    ↓                          ↘
+Generate MSAs (MMseqs2)    Generate Per-Sample Mutant FASTAs
+    ↓                          ↓
+Coevolution Analysis           ↓
+    ↓                          ↓
+Compensatory FASTAs            ↓
+    ↓                          ↓
+Combine Per-Plex FASTAs (ref + observed + compensatory)
+    ↓
+FragPipe MS Search (per plex)
 ```
 
 ## Workflows
@@ -88,36 +120,33 @@ Processes all BAMs currently in `BAMS/`, outputs to `VCF/` and `VEP/`:
 # Step 1: Variant calling (finds BAMs automatically)
 bash scripts/proc_bams/run_pipeline.sh variant-call
 
-# Step 2: VEP annotation (finds VCFs automatically)
+# Step 2: VEP annotation with AlphaMissense (finds VCFs automatically)
 bash scripts/proc_bams/run_pipeline.sh vep
 
 # Step 3: Delete BAMs, download next chunk, repeat
 rm -rf /scratch/leduc.an/AAS_Evo/BAMS/*
-
-# After ALL chunks: consolidate missense mutations
-bash scripts/proc_bams/consolidate_missense.sh
 ```
 
 VCF/VEP outputs persist across chunks. Both scripts skip already-processed samples.
 
-**Final output** (`all_missense_mutations.tsv`): sample_id, genomic position, gene symbol, protein change (HGVSp), amino acid swap, gnomAD population frequency, variant allele frequency.
+**Final output** (`all_missense_mutations.tsv`, 18 columns): sample_id, genomic position, consequence, gene symbol, protein change (HGVSp), amino acid swap, gnomADe_AF, AlphaMissense pathogenicity + class, read depths, VAF.
 
-### 3. Proteogenomics FASTA Generation
+### 3. Consolidate & Filter Mutations
 
 ```bash
-# One-time: download UniProt reference proteome
-wget -O /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
-    "https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=%28organism_id%3A9606%29+AND+%28reviewed%3Atrue%29"
+# After ALL chunks are processed: merge per-sample VEP TSVs
+bash scripts/proc_bams/consolidate_missense.sh
 
-# Generate per-sample mutant FASTAs + per-TMT-plex search databases
-sbatch scripts/fasta_gen/submit_proteogenomics.sh
+# Rank mutations by composite pathogenicity score (AlphaMissense, gnomAD, recurrence)
+python3 scripts/mutation_analysis/filter_and_rank.py \
+    --vep-tsv /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv \
+    --ref-fasta /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
+    -o /scratch/leduc.an/AAS_Evo/ANALYSIS
 ```
 
-Creates custom MS search databases: reference proteome + sample-specific missense mutations, combined per TMT plex. Links VEP output → GDC UUID → TMT plex via sample metadata.
+Output: `ANALYSIS/top_5000_mutations.tsv`, `ANALYSIS/gene_list_for_msa.txt` (used automatically by downstream steps).
 
-### 4. MSA Generation & Coevolution Analysis
-
-Predicts compensatory translation errors: given a destabilizing missense mutation, finds covarying positions via MI+APC and predicts which amino acid substitution could compensate.
+### 4. MSA Generation
 
 ```bash
 # One-time: download and index UniRef90 (~28 GB compressed)
@@ -125,22 +154,57 @@ wget -O uniref90.fasta.gz \
     https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref90/uniref90.fasta.gz
 mmseqs createdb uniref90.fasta.gz /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniref90
 
-# Step 1: Generate gene list (genes with mutations that need MSAs)
-python3 scripts/mutation_analysis/generate_msas.py --make-gene-list \
-    --vep-tsv /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv \
-    --msa-dir /scratch/leduc.an/AAS_Evo/MSA \
-    --ref-fasta /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
-    -o /scratch/leduc.an/AAS_Evo/gene_list.txt
-
-# Step 2: Generate MSAs (SLURM array, one gene per task)
-NUM_GENES=$(wc -l < /scratch/leduc.an/AAS_Evo/gene_list.txt)
+# Submit MSA generation (auto-finds gene list from ANALYSIS/)
+NUM_GENES=$(wc -l < /scratch/leduc.an/AAS_Evo/ANALYSIS/gene_list_for_msa.txt)
 sbatch --array=1-${NUM_GENES}%10 scripts/mutation_analysis/submit_msa_generation.sh
+```
 
-# Step 3: Run coevolution analysis (after MSA jobs complete)
+MSA files named by UniProt accession (`P04637.a3m`). Pre-existing MSAs are auto-detected and skipped.
+
+### 5. Coevolution Analysis
+
+Predicts compensatory translation errors: given a destabilizing missense mutation, finds covarying positions via MI+APC and predicts which amino acid substitution could compensate.
+
+```bash
+# After MSA generation completes (auto-finds gene list from ANALYSIS/):
 sbatch scripts/mutation_analysis/submit_coevolution.sh
 ```
 
-MSA files are named by UniProt accession (`P04637.a3m`). The gene list uses gene symbols from VEP; the scripts handle the mapping. Pre-existing MSAs (named by gene, accession, or entry name) are auto-detected and skipped.
+Output: `COEVOL/compensatory_predictions.tsv`
+
+### 6. Generate Compensatory FASTAs
+
+```bash
+# After coevolution analysis completes:
+sbatch scripts/fasta_gen/submit_compensatory_fastas.sh
+```
+
+Output: `FASTA/compensatory/all_compensatory.fasta` — each entry contains both the original destabilizing mutation and the predicted compensatory substitution applied to the reference protein.
+
+### 7. Proteogenomics FASTA Generation
+
+```bash
+# Generate per-sample mutant FASTAs + per-plex search databases
+# Automatically includes compensatory entries if FASTA/compensatory/ exists
+sbatch scripts/fasta_gen/submit_proteogenomics.sh
+```
+
+Creates custom MS search databases per TMT plex: reference proteome + plex-specific observed mutations + plex-specific compensatory entries. Compensatory headers include patient IDs and tumor/normal status.
+
+### 8. MS Database Search (FragPipe)
+
+```bash
+# Set up per-plex manifests and submit FragPipe searches
+bash scripts/ms_search/run_ms_search.sh /path/to/template.workflow
+
+# Or generate manifests first, then configure workflow separately:
+bash scripts/ms_search/run_ms_search.sh
+# -> Place workflow at MS_SEARCH/fragpipe.workflow, then:
+NUM_PLEXES=$(wc -l < /scratch/leduc.an/AAS_Evo/MS_SEARCH/plex_list.txt)
+sbatch --array=1-${NUM_PLEXES}%5 scripts/ms_search/submit_fragpipe.sh
+```
+
+Each plex is searched independently (different custom FASTA per plex). All fractions from a plex are grouped as one experiment. TMT channel annotations map channels to patient IDs.
 
 ## Reference Files
 
@@ -156,8 +220,6 @@ samtools faidx hg38.fa
 **CDS regions (GENCODE)** — GENCODE uses `chr` prefixes matching GDC BAMs:
 ```bash
 wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.annotation.gtf.gz
-
-# Extract CDS, filter to standard chromosomes, sort, merge overlapping intervals
 zcat gencode.v46.annotation.gtf.gz \
     | awk '$3 == "CDS" {print $1"\t"$4-1"\t"$5}' \
     | grep -E '^chr([0-9]+|X|Y|M)\b' \
@@ -165,16 +227,24 @@ zcat gencode.v46.annotation.gtf.gz \
     | bedtools merge \
     > cds.chr.bed
 ```
-The grep removes alt/patch contigs not in GDC BAMs. The merge is required — without it, overlapping CDS intervals cause bcftools mpileup to emit unsorted positions.
+
+**AlphaMissense data** (for VEP plugin):
+```bash
+wget -O AlphaMissense_hg38.tsv.gz \
+    "https://storage.googleapis.com/dm_alphamissense/AlphaMissense_hg38.tsv.gz"
+tabix -s 1 -b 2 -e 2 -S 1 AlphaMissense_hg38.tsv.gz
+```
 
 ## Requirements
 
 - Python 3.8+, numpy
 - `gdc-client` (GDC Data Transfer Tool)
 - `samtools`, `bcftools` (variant calling)
-- Ensembl VEP via Apptainer (annotation)
+- Ensembl VEP via Apptainer (annotation + AlphaMissense plugin)
 - `bedtools` (for generating CDS BED, if needed)
 - `mmseqs2` (MSA generation)
+- `htslib` / `tabix` (AlphaMissense indexing)
+- FragPipe (MS database search)
 
 ## Data Sources
 

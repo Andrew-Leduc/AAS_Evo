@@ -58,21 +58,53 @@ def load_tmt_map(tmt_map_path):
 
 def load_gdc_meta(gdc_meta_path):
     """
-    Load GDC metadata to map case_submitter_id -> file_id (UUID).
+    Load GDC metadata.
 
-    Returns dict: case_submitter_id -> list of file_ids
-    (one case may have multiple BAMs: tumor + normal)
+    Returns:
+        case_to_uuids: dict of case_submitter_id -> list of file_ids
+        uuid_to_info: dict of file_id -> {"case_id": str, "sample_type": str}
     """
     case_to_uuids = defaultdict(list)
+    uuid_to_info = {}
 
     with open(gdc_meta_path, newline="") as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             case_id = row["case_submitter_id"].strip()
             file_id = row["file_id"].strip()
+            sample_type = row.get("sample_type", "").strip()
             case_to_uuids[case_id].append(file_id)
+            uuid_to_info[file_id] = {
+                "case_id": case_id,
+                "sample_type": sample_type,
+            }
 
-    return case_to_uuids
+    return case_to_uuids, uuid_to_info
+
+
+def extract_original_mutation(comp_header):
+    """
+    Extract original mutation identity from a compensatory FASTA header.
+
+    Header format: >comp|P04637|TP53_R273H_comp_G245S OS=Homo sapiens GN=TP53
+    Returns mutation identity matching observed mutant headers: "P04637|TP53_R273H"
+    Returns None if header doesn't match expected format.
+    """
+    parts = comp_header.split("|")
+    if len(parts) < 3:
+        return None
+
+    accession = parts[1]
+    # parts[2] is like "TP53_R273H_comp_G245S OS=Homo sapiens GN=TP53"
+    desc = parts[2].split()[0]  # "TP53_R273H_comp_G245S"
+
+    # Find "_comp_" and take everything before it as the original mutation label
+    comp_idx = desc.find("_comp_")
+    if comp_idx == -1:
+        return None
+
+    orig_label = desc[:comp_idx]  # "TP53_R273H"
+    return f"{accession}|{orig_label}"
 
 
 def load_mutant_fasta(fasta_path):
@@ -156,7 +188,7 @@ def main():
 
     # Load GDC metadata
     print(f"Loading GDC metadata: {args.gdc_meta}")
-    case_to_uuids = load_gdc_meta(args.gdc_meta)
+    case_to_uuids, uuid_to_info = load_gdc_meta(args.gdc_meta)
     print(f"  {len(case_to_uuids)} cases with GDC data")
 
     # Index available mutant FASTAs
@@ -167,21 +199,36 @@ def main():
             available_fastas.add(uuid)
     print(f"  {len(available_fastas)} per-sample mutant FASTAs available")
 
+    # Index compensatory entries by their original mutation identity
+    comp_by_orig_mut = defaultdict(list)
+    if comp_entries:
+        for header, seq in comp_entries:
+            orig_mut = extract_original_mutation(header)
+            if orig_mut:
+                comp_by_orig_mut[orig_mut].append((header, seq))
+        print(f"  {len(comp_by_orig_mut)} unique original mutations "
+              f"with compensatory entries")
+
     # Process each plex
     print(f"\nGenerating per-plex FASTAs...")
     summary_path = os.path.join(args.output, "plex_summary.tsv")
 
     with open(summary_path, "w") as summary_f:
         summary_f.write("plex_id\tcases_in_plex\tcases_with_gdc\t"
-                        "samples_with_fasta\tmutant_entries\tunique_mutations\n")
+                        "samples_with_fasta\tmutant_entries\t"
+                        "unique_mutations\tcomp_entries\n")
 
         total_plexes = 0
+        total_comp_entries = 0
         for plex_id in sorted(plex_to_cases.keys()):
             cases = plex_to_cases[plex_id]
 
             # Collect all mutant entries for this plex
             plex_mutants = []
             seen_mutations = set()  # header-based dedup (mutation identity)
+            # Track which mutations come from which samples/cases
+            # mut_id -> list of (case_id, sample_type)
+            mutation_to_samples = defaultdict(list)
             cases_with_gdc = 0
             samples_with_fasta = 0
 
@@ -195,6 +242,9 @@ def main():
                         continue
 
                     samples_with_fasta += 1
+                    info = uuid_to_info.get(uuid, {})
+                    sample_type = info.get("sample_type", "unknown")
+
                     fasta_path = os.path.join(args.sample_dir,
                                               f"{uuid}_mutant.fasta")
                     entries = load_mutant_fasta(fasta_path)
@@ -208,26 +258,61 @@ def main():
                         else:
                             mut_id = header
 
+                        # Track sample provenance for this mutation
+                        mutation_to_samples[mut_id].append(
+                            (case_id, sample_type))
+
                         if mut_id not in seen_mutations:
                             seen_mutations.add(mut_id)
                             plex_mutants.append((header, seq))
 
+            # Filter compensatory entries to those whose original mutation
+            # is present in this plex, and annotate headers with patient info
+            plex_comp_entries = []
+            if comp_entries:
+                for header, seq in comp_entries:
+                    orig_mut = extract_original_mutation(header)
+                    if orig_mut and orig_mut in seen_mutations:
+                        # Build sample annotation string
+                        samples = mutation_to_samples.get(orig_mut, [])
+                        if samples:
+                            # Deduplicate and format: C3L-00001(tumor)
+                            sample_strs = sorted(set(
+                                f"{cid}({stype})"
+                                for cid, stype in samples
+                            ))
+                            sample_tag = f" SAMPLES={','.join(sample_strs)}"
+                        else:
+                            sample_tag = ""
+
+                        # Insert sample info before OS= in header
+                        if " OS=" in header:
+                            annotated = header.replace(
+                                " OS=", f"{sample_tag} OS=")
+                        else:
+                            annotated = header + sample_tag
+
+                        plex_comp_entries.append((annotated, seq))
+
             # Write plex FASTA: reference + mutants + compensatory
             out_path = os.path.join(args.output, f"{plex_id}.fasta")
-            all_entries = ref_entries + plex_mutants + comp_entries
+            all_entries = ref_entries + plex_mutants + plex_comp_entries
             write_fasta(all_entries, out_path)
 
             summary_f.write(f"{plex_id}\t{len(cases)}\t{cases_with_gdc}\t"
                             f"{samples_with_fasta}\t{len(plex_mutants)}\t"
-                            f"{len(seen_mutations)}\n")
+                            f"{len(seen_mutations)}\t"
+                            f"{len(plex_comp_entries)}\n")
 
             total_plexes += 1
+            total_comp_entries += len(plex_comp_entries)
 
     print(f"\n{'='*50}")
     print(f"Plex FASTA Generation Summary")
     print(f"{'='*50}")
-    print(f"Plexes generated: {total_plexes}")
-    print(f"Reference proteins: {len(ref_entries)}")
+    print(f"Plexes generated:       {total_plexes}")
+    print(f"Reference proteins:     {len(ref_entries)}")
+    print(f"Compensatory entries:   {total_comp_entries} (across all plexes)")
     print(f"Summary: {summary_path}")
     print(f"Output:  {args.output}")
 

@@ -16,18 +16,14 @@
 # sequence against UniRef90 and produces an A3M alignment file.
 #
 # Prerequisites:
-#   - Gene list generated:
-#       python3 scripts/proteogenomics/generate_msas.py --make-gene-list \
-#           --vep-tsv /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv \
-#           --msa-dir /scratch/leduc.an/AAS_Evo/MSA \
-#           --ref-fasta /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
-#           -o /scratch/leduc.an/AAS_Evo/gene_list.txt
+#   - Gene list generated via filter_and_rank.py (writes ANALYSIS/gene_list_for_msa.txt)
+#     or via generate_msas.py --make-gene-list (writes gene_list.txt)
 #
 #   - UniRef90 MMseqs2 database in SEQ_FILES/uniref90
-#       (build with: mmseqs createdb uniref90.fasta SEQ_FILES/uniref90)
+#       (build with: mmseqs createdb uniref90.fasta.gz SEQ_FILES/uniref90)
 #
 # Usage:
-#   NUM_GENES=$(wc -l < /scratch/leduc.an/AAS_Evo/gene_list.txt)
+#   NUM_GENES=$(wc -l < /scratch/leduc.an/AAS_Evo/ANALYSIS/gene_list_for_msa.txt)
 #   sbatch --array=1-${NUM_GENES}%10 submit_msa_generation.sh
 #
 
@@ -37,7 +33,12 @@ set -euo pipefail
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="/scratch/leduc.an/AAS_Evo"
 
-GENE_LIST="${DATA_DIR}/gene_list.txt"
+# Gene list: prefer filter_and_rank.py output, fall back to legacy location
+if [[ -f "${DATA_DIR}/ANALYSIS/gene_list_for_msa.txt" ]]; then
+    GENE_LIST="${DATA_DIR}/ANALYSIS/gene_list_for_msa.txt"
+else
+    GENE_LIST="${DATA_DIR}/gene_list.txt"
+fi
 REF_FASTA="${DATA_DIR}/SEQ_FILES/uniprot_human_canonical.fasta"
 UNIREF90_DB="${DATA_DIR}/SEQ_FILES/uniref90"
 MSA_DIR="${DATA_DIR}/MSA"

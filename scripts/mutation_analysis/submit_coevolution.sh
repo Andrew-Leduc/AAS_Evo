@@ -38,7 +38,12 @@ DATA_DIR="/scratch/leduc.an/AAS_Evo"
 REF_FASTA="${DATA_DIR}/SEQ_FILES/uniprot_human_canonical.fasta"
 VEP_TSV="${DATA_DIR}/VEP/all_missense_mutations.tsv"
 MSA_DIR="${DATA_DIR}/MSA"
-GENE_LIST="${DATA_DIR}/gene_list.txt"
+# Gene list: prefer filter_and_rank.py output, fall back to legacy location
+if [[ -f "${DATA_DIR}/ANALYSIS/gene_list_for_msa.txt" ]]; then
+    GENE_LIST="${DATA_DIR}/ANALYSIS/gene_list_for_msa.txt"
+else
+    GENE_LIST="${DATA_DIR}/gene_list.txt"
+fi
 OUT_DIR="${DATA_DIR}/COEVOL"
 # --------------------------
 
