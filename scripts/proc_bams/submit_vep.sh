@@ -25,11 +25,12 @@
 set -euo pipefail
 
 # --------- PATHS ----------
-VCF_LIST="/scratch/leduc.an/AAS_Evo/vcf_list.txt"
+DATA_DIR="/scratch/leduc.an/AAS_Evo"
+VCF_LIST="${DATA_DIR}/vcf_list.txt"
 SIF="/scratch/leduc.an/tools/vep/ensembl-vep.sif"
-VEP_CACHE="/scratch/leduc.an/tools/vep/cache"
-FASTA="/scratch/leduc.an/AAS_Evo/SEQ_FILES/hg38.fa"
-OUTDIR="/scratch/leduc.an/AAS_Evo/VEP"
+VEP_CACHE="${DATA_DIR}/SEQ_FILES/vep_cache"
+FASTA="${DATA_DIR}/SEQ_FILES/hg38.fa"
+OUTDIR="${DATA_DIR}/VEP"
 # --------------------------
 
 mkdir -p "$OUTDIR"
@@ -93,7 +94,7 @@ echo "[$(date)] Extracting missense variants..." | tee -a "$LOG"
 # Extract missense variants to TSV
 # Parse VEP annotations from VCF INFO field
 {
-    echo -e "sample_id\tCHROM\tPOS\tREF\tALT\tConsequence\tSYMBOL\tGene\tHGVSp\tAmino_acids\tProtein_position\tgnomAD_AF\tVAF"
+    echo -e "sample_id\tCHROM\tPOS\tREF\tALT\tConsequence\tSYMBOL\tGene\tHGVSp\tAmino_acids\tProtein_position\tgnomAD_AF\tDP\tAD_ref\tAD_alt\tVAF"
 
     zcat "$VEP_OUT" 2>/dev/null | grep -v "^#" | awk -v sid="$SAMPLE_ID" -F'\t' '
     BEGIN { OFS="\t" }
@@ -128,15 +129,23 @@ echo "[$(date)] Extracting missense variants..." | tee -a "$LOG"
 
             # Only output missense variants
             if (consequence ~ /missense/) {
-                # Extract VAF from FORMAT/sample fields if present
+                # Extract DP, AD from FORMAT/sample fields if present
+                dp = "NA"
+                ad_ref = "NA"
+                ad_alt = "NA"
                 vaf = "NA"
                 if (NF >= 10) {
-                    # Parse FORMAT and sample columns for AD
+                    # Parse FORMAT and sample columns
                     split($9, fmt, ":")
                     split($10, vals, ":")
                     for (i=1; i<=length(fmt); i++) {
+                        if (fmt[i] == "DP") {
+                            dp = vals[i]
+                        }
                         if (fmt[i] == "AD") {
                             split(vals[i], ad, ",")
+                            ad_ref = ad[1]
+                            ad_alt = ad[2]
                             if (ad[1] + ad[2] > 0) {
                                 vaf = ad[2] / (ad[1] + ad[2])
                             }
@@ -144,7 +153,7 @@ echo "[$(date)] Extracting missense variants..." | tee -a "$LOG"
                     }
                 }
 
-                print sid, chrom, pos, ref, alt, consequence, symbol, gene, hgvsp, amino_acids, protein_pos, gnomad_af, vaf
+                print sid, chrom, pos, ref, alt, consequence, symbol, gene, hgvsp, amino_acids, protein_pos, gnomad_af, dp, ad_ref, ad_alt, vaf
             }
         }
     }'
