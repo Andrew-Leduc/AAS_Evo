@@ -123,6 +123,8 @@ def main():
                         help="GDC matched metadata (gdc_meta_matched.tsv)")
     parser.add_argument("-o", "--output", required=True,
                         help="Output directory for per-plex FASTAs")
+    parser.add_argument("--compensatory-fasta", default=None,
+                        help="Optional compensatory mutant FASTA to append to all plexes")
 
     args = parser.parse_args()
 
@@ -139,6 +141,13 @@ def main():
     print(f"Loading reference proteome: {args.ref_fasta}")
     ref_entries = load_mutant_fasta(args.ref_fasta)
     print(f"  {len(ref_entries)} reference proteins")
+
+    # Load compensatory entries if provided
+    comp_entries = []
+    if args.compensatory_fasta and os.path.isfile(args.compensatory_fasta):
+        print(f"Loading compensatory FASTAs: {args.compensatory_fasta}")
+        comp_entries = load_mutant_fasta(args.compensatory_fasta)
+        print(f"  {len(comp_entries)} compensatory entries")
 
     # Load TMT mapping
     print(f"Loading TMT map: {args.tmt_map}")
@@ -203,9 +212,9 @@ def main():
                             seen_mutations.add(mut_id)
                             plex_mutants.append((header, seq))
 
-            # Write plex FASTA: reference + mutants
+            # Write plex FASTA: reference + mutants + compensatory
             out_path = os.path.join(args.output, f"{plex_id}.fasta")
-            all_entries = ref_entries + plex_mutants
+            all_entries = ref_entries + plex_mutants + comp_entries
             write_fasta(all_entries, out_path)
 
             summary_f.write(f"{plex_id}\t{len(cases)}\t{cases_with_gdc}\t"

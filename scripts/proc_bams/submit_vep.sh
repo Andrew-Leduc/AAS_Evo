@@ -31,6 +31,7 @@ SIF="/scratch/leduc.an/tools/vep/ensembl-vep.sif"
 VEP_CACHE="${DATA_DIR}/SEQ_FILES/vep_cache"
 FASTA="${DATA_DIR}/SEQ_FILES/hg38.fa"
 OUTDIR="${DATA_DIR}/VEP"
+ALPHAMISSENSE="${DATA_DIR}/SEQ_FILES/AlphaMissense_hg38.tsv.gz"
 # --------------------------
 
 mkdir -p "$OUTDIR"
@@ -65,14 +66,16 @@ fi
 
 echo "[$(date)] Running VEP on: $SAMPLE_ID" | tee "$LOG"
 
-# Run VEP with gnomAD frequencies
+# Run VEP with gnomAD frequencies and AlphaMissense pathogenicity
 # --af_gnomade adds gnomAD exome allele frequencies (VEP 115+ field name)
+# --plugin AlphaMissense adds pathogenicity scores (am_pathogenicity, am_class)
 # --pick selects one consequence per variant (canonical preferred)
 apptainer exec \
     -B "${VEP_CACHE}":/cache \
     -B "$(dirname "$FASTA")":/ref \
     -B "$(dirname "$VCF")":/input \
     -B "$OUTDIR":/output \
+    -B "$(dirname "$ALPHAMISSENSE")":/alphamissense \
     "${SIF}" \
     vep \
         -i "/input/$(basename "$VCF")" \
@@ -83,8 +86,9 @@ apptainer exec \
         --fasta "/ref/$(basename "$FASTA")" \
         --symbol --hgvs --protein --canonical \
         --af_gnomade \
+        --plugin AlphaMissense,file=/alphamissense/AlphaMissense_hg38.tsv.gz \
         --pick \
-        --fields "Consequence,SYMBOL,Gene,BIOTYPE,HGVSc,HGVSp,Protein_position,Amino_acids,Codons,gnomADe_AF" \
+        --fields "Consequence,SYMBOL,Gene,BIOTYPE,HGVSc,HGVSp,Protein_position,Amino_acids,Codons,gnomADe_AF,am_pathogenicity,am_class" \
         --fork 8 \
         --warning_file "/output/${SAMPLE_ID}.vep.warnings.txt" \
         2>&1 | tee -a "$LOG"
@@ -94,7 +98,7 @@ echo "[$(date)] Extracting missense variants..." | tee -a "$LOG"
 # Extract missense variants to TSV
 # Parse VEP annotations from VCF INFO field
 {
-    echo -e "sample_id\tCHROM\tPOS\tREF\tALT\tConsequence\tSYMBOL\tGene\tHGVSp\tAmino_acids\tProtein_position\tgnomADe_AF\tDP\tAD_ref\tAD_alt\tVAF"
+    echo -e "sample_id\tCHROM\tPOS\tREF\tALT\tConsequence\tSYMBOL\tGene\tHGVSp\tAmino_acids\tProtein_position\tgnomADe_AF\tam_pathogenicity\tam_class\tDP\tAD_ref\tAD_alt\tVAF"
 
     zcat "$VEP_OUT" 2>/dev/null | grep -v "^#" | awk -v sid="$SAMPLE_ID" -F'\t' '
     BEGIN { OFS="\t" }
@@ -126,6 +130,8 @@ echo "[$(date)] Extracting missense variants..." | tee -a "$LOG"
             amino_acids = fields[8]
             codons = fields[9]
             gnomad_af = fields[10]
+            am_path = fields[11]
+            am_class = fields[12]
 
             # Only output missense variants
             if (consequence ~ /missense/) {
@@ -153,7 +159,7 @@ echo "[$(date)] Extracting missense variants..." | tee -a "$LOG"
                     }
                 }
 
-                print sid, chrom, pos, ref, alt, consequence, symbol, gene, hgvsp, amino_acids, protein_pos, gnomad_af, dp, ad_ref, ad_alt, vaf
+                print sid, chrom, pos, ref, alt, consequence, symbol, gene, hgvsp, amino_acids, protein_pos, gnomad_af, am_path, am_class, dp, ad_ref, ad_alt, vaf
             }
         }
     }'

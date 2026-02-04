@@ -73,13 +73,20 @@ python3 "${SCRIPTS_DIR}/generate_mutant_fastas.py" \
 
 echo ""
 
-# Step 2: Combine by TMT plex
+# Step 2: Combine by TMT plex (with compensatory mutations if available)
+COMP_FASTA="${FASTA_DIR}/compensatory/all_compensatory.fasta"
 echo "[$(date)] Step 2: Combining per-plex FASTAs..."
+COMP_FLAG=""
+if [[ -f "$COMP_FASTA" ]]; then
+    COMP_FLAG="--compensatory-fasta $COMP_FASTA"
+    echo "  Including compensatory mutations from: $COMP_FASTA"
+fi
 python3 "${SCRIPTS_DIR}/combine_plex_fastas.py" \
     --ref-fasta "$REF_FASTA" \
     --sample-dir "${FASTA_DIR}/per_sample" \
     --tmt-map "$TMT_MAP" \
     --gdc-meta "$GDC_META" \
+    $COMP_FLAG \
     -o "${FASTA_DIR}/per_plex"
 
 echo ""

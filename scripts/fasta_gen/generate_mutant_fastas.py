@@ -168,7 +168,7 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
             amino_acids = row.get("Amino_acids", "").strip()
             protein_position = row.get("Protein_position", "").strip()
             vaf_str = row.get("VAF", "NA").strip()
-            gnomad_str = row.get("gnomAD_AF", "").strip()
+            gnomad_str = row.get("gnomADe_AF", "").strip()
 
             # Parse VAF filter
             if min_vaf is not None and vaf_str not in ("", "NA", "-"):

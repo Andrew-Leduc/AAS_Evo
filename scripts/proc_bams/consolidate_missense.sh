@@ -17,7 +17,7 @@ OUTPUT="$VEP_DIR/all_missense_mutations.tsv"
 echo "[$(date)] Consolidating missense mutations..."
 
 # Write header once
-echo -e "sample_id\tCHROM\tPOS\tREF\tALT\tConsequence\tSYMBOL\tGene\tHGVSp\tAmino_acids\tProtein_position\tgnomAD_AF\tVAF" > "$OUTPUT"
+echo -e "sample_id\tCHROM\tPOS\tREF\tALT\tConsequence\tSYMBOL\tGene\tHGVSp\tAmino_acids\tProtein_position\tgnomADe_AF\tam_pathogenicity\tam_class\tDP\tAD_ref\tAD_alt\tVAF" > "$OUTPUT"
 
 # Append all TSV files (skipping headers)
 count=0

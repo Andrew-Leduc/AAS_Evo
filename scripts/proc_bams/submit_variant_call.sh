@@ -64,6 +64,7 @@ LOG="$OUTDIR/${SAMPLE_ID}.log"
 VCF_GZ="$OUTDIR/${SAMPLE_ID}.vcf.gz"
 VCF_TMP="$OUTDIR/${SAMPLE_ID}.vcf.gz.tmp"
 TSV="$OUTDIR/${SAMPLE_ID}.variants.tsv"
+QC_TSV="$OUTDIR/${SAMPLE_ID}.mapping_qc.tsv"
 
 # Skip if already processed
 if [[ -f "$VCF_GZ" && -f "${VCF_GZ}.tbi" ]]; then
@@ -95,6 +96,31 @@ if [[ ! -f "$CDS_BED" ]]; then
     echo "ERROR: CDS BED file not found: $CDS_BED" | tee -a "$LOG"
     exit 1
 fi
+
+# --------- MAPPING QC ----------
+echo "[$(date)] Collecting mapping QC stats..." | tee -a "$LOG"
+
+# Total and mapped reads from flagstat
+FLAGSTAT=$(samtools flagstat -@ 2 "$BAM" 2>>"$LOG")
+TOTAL_READS=$(echo "$FLAGSTAT" | head -1 | awk '{print $1}')
+MAPPED_READS=$(echo "$FLAGSTAT" | grep "mapped (" | head -1 | awk '{print $1}')
+MAPPING_RATE=$(echo "$FLAGSTAT" | grep "mapped (" | head -1 | sed 's/.*(\([0-9.]*\)%.*/\1/')
+
+# Reads on CDS target
+ON_TARGET=$(samtools view -c -@ 2 -L "$CDS_BED" "$BAM" 2>>"$LOG")
+ON_TARGET_PCT=$(awk "BEGIN {printf \"%.2f\", 100 * $ON_TARGET / $MAPPED_READS}")
+
+# Mean depth over CDS regions
+MEAN_DEPTH=$(samtools depth -@ 2 -b "$CDS_BED" "$BAM" 2>>"$LOG" \
+    | awk '{sum+=$3; n++} END {if(n>0) printf "%.1f", sum/n; else print "0"}')
+
+{
+    echo -e "sample_id\ttotal_reads\tmapped_reads\tmapping_rate_pct\ton_target_reads\ton_target_pct\tmean_cds_depth"
+    echo -e "${SAMPLE_ID}\t${TOTAL_READS}\t${MAPPED_READS}\t${MAPPING_RATE}\t${ON_TARGET}\t${ON_TARGET_PCT}\t${MEAN_DEPTH}"
+} > "$QC_TSV"
+
+echo "[$(date)] QC: ${MAPPING_RATE}% mapped, ${ON_TARGET_PCT}% on-target, ${MEAN_DEPTH}x mean CDS depth" | tee -a "$LOG"
+# --------------------------------
 
 echo "[$(date)] Calling variants with bcftools (CDS regions only)..." | tee -a "$LOG"
 
@@ -142,3 +168,4 @@ echo "[$(date)] Writing TSV..." | tee -a "$LOG"
 echo "[$(date)] Done: $SAMPLE_ID" | tee -a "$LOG"
 echo "VCF: $VCF_GZ"
 echo "TSV: $TSV"
+echo "QC:  $QC_TSV"
