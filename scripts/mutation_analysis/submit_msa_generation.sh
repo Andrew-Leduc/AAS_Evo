@@ -31,6 +31,11 @@ set -euo pipefail
 
 # --------- PATHS ----------
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+# SLURM copies batch scripts to a spool directory, breaking dirname $0.
+# Fall back to SLURM_SUBMIT_DIR when the expected Python script isn't found.
+if [[ -n "${SLURM_SUBMIT_DIR:-}" && ! -f "${SCRIPTS_DIR}/generate_msas.py" ]]; then
+    SCRIPTS_DIR="${SLURM_SUBMIT_DIR}/scripts/mutation_analysis"
+fi
 DATA_DIR="/scratch/leduc.an/AAS_Evo"
 
 # Gene list: prefer filter_and_rank.py output, fall back to legacy location

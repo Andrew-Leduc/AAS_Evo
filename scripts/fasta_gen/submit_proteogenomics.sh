@@ -27,6 +27,11 @@ set -euo pipefail
 
 # --------- PATHS ----------
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+# SLURM copies batch scripts to a spool directory, breaking dirname $0.
+# Fall back to SLURM_SUBMIT_DIR when the expected Python script isn't found.
+if [[ -n "${SLURM_SUBMIT_DIR:-}" && ! -f "${SCRIPTS_DIR}/generate_mutant_fastas.py" ]]; then
+    SCRIPTS_DIR="${SLURM_SUBMIT_DIR}/scripts/fasta_gen"
+fi
 META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo_meta"
 DATA_DIR="/scratch/leduc.an/AAS_Evo"
 

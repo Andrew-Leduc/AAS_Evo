@@ -33,6 +33,11 @@ set -euo pipefail
 
 # --------- PATHS ----------
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+# SLURM copies batch scripts to a spool directory, breaking dirname $0.
+# Fall back to SLURM_SUBMIT_DIR when the expected Python script isn't found.
+if [[ -n "${SLURM_SUBMIT_DIR:-}" && ! -f "${SCRIPTS_DIR}/coevolution_analysis.py" ]]; then
+    SCRIPTS_DIR="${SLURM_SUBMIT_DIR}/scripts/mutation_analysis"
+fi
 DATA_DIR="/scratch/leduc.an/AAS_Evo"
 
 REF_FASTA="${DATA_DIR}/SEQ_FILES/uniprot_human_canonical.fasta"
