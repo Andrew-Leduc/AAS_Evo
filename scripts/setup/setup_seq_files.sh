@@ -170,10 +170,10 @@ echo ""
 # Source: ColabFold pre-built UniRef30 MMseqs2 database (Mirdita et al., 2022).
 # Pre-indexed — no mmseqs createdb step needed.
 # Download: ~68 GB compressed. Extracted: ~110 GB.
-UNIREF30_DIR="${SEQ_DIR}/uniref30_2302"
+UNIREF30_PREFIX="${SEQ_DIR}/uniref30_2302"
 if [[ "$SKIP_LARGE" == true ]]; then
     log "SKIP UniRef30 (--skip-large)"
-elif [[ -f "${UNIREF30_DIR}/uniref30_2302.dbtype" || -f "${UNIREF30_DIR}/uniref30_2302" ]]; then
+elif [[ -f "${UNIREF30_PREFIX}.dbtype" || -f "${UNIREF30_PREFIX}.tsv" ]]; then
     log "SKIP UniRef30 MMseqs2 database (already exists)"
 else
     UNIREF30_GZ="${SEQ_DIR}/uniref30_2302.tar.gz"
@@ -256,7 +256,7 @@ check_file "${SEQ_DIR}/cds.chr.bed"                    "cds.chr.bed"
 check_file "${SEQ_DIR}/uniprot_human_canonical.fasta"  "uniprot_human_canonical.fasta"
 check_file "${SEQ_DIR}/AlphaMissense_hg38.tsv.gz"      "AlphaMissense_hg38.tsv.gz"
 check_file "${SEQ_DIR}/AlphaMissense_hg38.tsv.gz.tbi"  "AlphaMissense_hg38.tsv.gz.tbi"
-check_file "${UNIREF30_DIR}/uniref30_2302.dbtype"       "UniRef30 MMseqs2 database"
+check_file "${UNIREF30_PREFIX}.tsv"                      "UniRef30 MMseqs2 database"
 check_file "${VEP_DIR}/ensembl-vep.sif"                "VEP Apptainer container"
 check_file "${SEQ_DIR}/vep_cache/homo_sapiens"         "VEP cache"
 echo ""

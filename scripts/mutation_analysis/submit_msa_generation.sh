@@ -45,7 +45,7 @@ else
     GENE_LIST="${DATA_DIR}/gene_list.txt"
 fi
 REF_FASTA="${DATA_DIR}/SEQ_FILES/uniprot_human_canonical.fasta"
-TARGET_DB="${DATA_DIR}/SEQ_FILES/uniref30_2302/uniref30_2302"
+TARGET_DB="${DATA_DIR}/SEQ_FILES/uniref30_2302"
 MSA_DIR="${DATA_DIR}/MSA"
 TMP_DIR="${DATA_DIR}/tmp/msa_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 # --------------------------

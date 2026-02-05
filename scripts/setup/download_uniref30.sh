@@ -27,17 +27,17 @@
 set -euo pipefail
 
 SEQ_DIR="/scratch/leduc.an/AAS_Evo/SEQ_FILES"
-DB_DIR="${SEQ_DIR}/uniref30_2302"
+DB_PREFIX="${SEQ_DIR}/uniref30_2302"
 TARBALL="${SEQ_DIR}/uniref30_2302.tar.gz"
 URL="https://wwwuser.gwdg.de/~compbiol/colabfold/uniref30_2302.tar.gz"
 
 mkdir -p "$SEQ_DIR"
 mkdir -p /scratch/leduc.an/AAS_Evo/logs
 
-# Check if already extracted
-if [[ -f "${DB_DIR}/uniref30_2302" || -f "${DB_DIR}/uniref30_2302.dbtype" ]]; then
-    echo "[$(date)] UniRef30 database already exists at ${DB_DIR}"
-    echo "  To re-download, remove: rm -rf ${DB_DIR} ${TARBALL}"
+# Check if already extracted (ColabFold extracts directly into SEQ_DIR, not a subdirectory)
+if [[ -f "${DB_PREFIX}.tsv" || -f "${DB_PREFIX}.dbtype" ]]; then
+    echo "[$(date)] UniRef30 database already exists at ${DB_PREFIX}"
+    echo "  To re-download, remove the uniref30_2302* files and ${TARBALL}"
     exit 0
 fi
 
@@ -51,27 +51,19 @@ else
     echo "[$(date)] Download complete."
 fi
 
-# Extract
+# Extract (ColabFold tarball extracts files directly, not into a subdirectory)
 echo "[$(date)] Extracting (this will take a while)..."
-mkdir -p "$DB_DIR"
 tar -xzf "$TARBALL" -C "$SEQ_DIR"
 
 # Verify
-if [[ -f "${DB_DIR}/uniref30_2302" || -f "${DB_DIR}/uniref30_2302.dbtype" ]]; then
+if [[ -f "${DB_PREFIX}.tsv" ]]; then
     echo "[$(date)] UniRef30 database extracted successfully."
-    echo "  Location: ${DB_DIR}"
-    ls -lh "${DB_DIR}/"
+    echo "  Database prefix: ${DB_PREFIX}"
+    ls -lh "${SEQ_DIR}/" | grep uniref30
 else
-    # Some tarballs extract into the current directory directly
-    # Check if files ended up in SEQ_DIR instead
-    if [[ -f "${SEQ_DIR}/uniref30_2302.dbtype" ]]; then
-        echo "[$(date)] UniRef30 database extracted to ${SEQ_DIR}"
-        echo "  Database prefix: ${SEQ_DIR}/uniref30_2302"
-    else
-        echo "[$(date)] WARNING: Expected database files not found."
-        echo "  Check extraction path. Contents of ${SEQ_DIR}:"
-        ls "${SEQ_DIR}/" | grep -i uniref30 || echo "  (no uniref30 files found)"
-    fi
+    echo "[$(date)] WARNING: Expected database files not found."
+    echo "  Check extraction. Contents of ${SEQ_DIR}:"
+    ls "${SEQ_DIR}/" | grep -i uniref30 || echo "  (no uniref30 files found)"
 fi
 
 # Optionally remove tarball to save space
