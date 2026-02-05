@@ -3,7 +3,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=4:00:00
+#SBATCH --time=2:00:00
 #SBATCH --partition=short
 #SBATCH --job-name=msa_gen
 #SBATCH --output=/scratch/leduc.an/AAS_Evo/logs/msa_gen_%A_%a.out
@@ -13,14 +13,14 @@
 # Generate MSAs via MMseqs2 for coevolution analysis.
 #
 # One SLURM array task per gene. Each task searches the gene's protein
-# sequence against UniRef90 and produces an A3M alignment file.
+# sequence against UniRef30 and produces an A3M alignment file.
 #
 # Prerequisites:
 #   - Gene list generated via filter_and_rank.py (writes ANALYSIS/gene_list_for_msa.txt)
 #     or via generate_msas.py --make-gene-list (writes gene_list.txt)
 #
-#   - UniRef90 MMseqs2 database in SEQ_FILES/uniref90
-#       (build with: mmseqs createdb uniref90.fasta.gz SEQ_FILES/uniref90)
+#   - UniRef30 ColabFold MMseqs2 database in SEQ_FILES/uniref30_2302/
+#       (download with: sbatch scripts/setup/download_uniref30.sh)
 #
 # Usage:
 #   NUM_GENES=$(wc -l < /scratch/leduc.an/AAS_Evo/ANALYSIS/gene_list_for_msa.txt)
@@ -45,7 +45,7 @@ else
     GENE_LIST="${DATA_DIR}/gene_list.txt"
 fi
 REF_FASTA="${DATA_DIR}/SEQ_FILES/uniprot_human_canonical.fasta"
-UNIREF90_DB="${DATA_DIR}/SEQ_FILES/uniref90"
+TARGET_DB="${DATA_DIR}/SEQ_FILES/uniref30_2302/uniref30_2302"
 MSA_DIR="${DATA_DIR}/MSA"
 TMP_DIR="${DATA_DIR}/tmp/msa_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 # --------------------------
@@ -69,10 +69,10 @@ if [[ ! -f "$REF_FASTA" ]]; then
     exit 1
 fi
 
-# Check UniRef90 database exists (mmseqs dbs have multiple files)
-if [[ ! -f "${UNIREF90_DB}.dbtype" ]] && [[ ! -f "${UNIREF90_DB}" ]]; then
-    echo "ERROR: UniRef90 database not found: $UNIREF90_DB"
-    echo "Build with: mmseqs createdb uniref90.fasta ${UNIREF90_DB}"
+# Check target database exists (mmseqs dbs have multiple files)
+if [[ ! -f "${TARGET_DB}.dbtype" ]] && [[ ! -f "${TARGET_DB}" ]]; then
+    echo "ERROR: Target database not found: $TARGET_DB"
+    echo "Download with: sbatch scripts/setup/download_uniref30.sh"
     exit 1
 fi
 
@@ -85,7 +85,7 @@ python3 "${SCRIPTS_DIR}/generate_msas.py" \
     --gene-list "$GENE_LIST" \
     --index "${SLURM_ARRAY_TASK_ID}" \
     --ref-fasta "$REF_FASTA" \
-    --uniref90-db "$UNIREF90_DB" \
+    --target-db "$TARGET_DB" \
     --msa-dir "$MSA_DIR" \
     --tmp-dir "$TMP_DIR" \
     --threads 4

@@ -20,7 +20,7 @@ Two modes:
          --gene-list gene_list.txt \
          --index 1 \
          --ref-fasta /path/to/uniprot_human_canonical.fasta \
-         --uniref90-db /path/to/uniref90 \
+         --target-db /path/to/uniref30_2302 \
          --msa-dir /path/to/MSA/ \
          --tmp-dir /path/to/tmp/ \
          --threads 4
@@ -224,7 +224,7 @@ def make_gene_list(args):
 # Mode 2: Single-gene MSA generation
 # ---------------------------------------------------------------------------
 
-def run_mmseqs_pipeline(query_fasta, uniref90_db, output_a3m, tmp_dir,
+def run_mmseqs_pipeline(query_fasta, target_db, output_a3m, tmp_dir,
                         threads, num_iterations, sensitivity):
     """Run the MMseqs2 search + MSA pipeline for a single query protein."""
     query_db = os.path.join(tmp_dir, "queryDB")
@@ -243,18 +243,18 @@ def run_mmseqs_pipeline(query_fasta, uniref90_db, output_a3m, tmp_dir,
     ):
         return False
 
-    # Step 2: Search against UniRef90
+    # Step 2: Search against target database
     if not run_command(
-        f"mmseqs search {query_db} {uniref90_db} {result_db} {mmseqs_tmp} "
+        f"mmseqs search {query_db} {target_db} {result_db} {mmseqs_tmp} "
         f"--num-iterations {num_iterations} -s {sensitivity} "
         f"--threads {threads}",
-        f"Searching UniRef90 (iters={num_iterations}, sens={sensitivity})"
+        f"Searching target DB (iters={num_iterations}, sens={sensitivity})"
     ):
         return False
 
     # Step 3: Convert results to MSA (A3M format)
     if not run_command(
-        f"mmseqs result2msa {query_db} {uniref90_db} {result_db} {msa_db} "
+        f"mmseqs result2msa {query_db} {target_db} {result_db} {msa_db} "
         f"--msa-format-mode 6",
         "Converting results to A3M"
     ):
@@ -332,7 +332,7 @@ def generate_single_msa(args):
         # Run MMseqs2
         os.makedirs(args.msa_dir, exist_ok=True)
         success = run_mmseqs_pipeline(
-            query_fasta, args.uniref90_db, output_a3m, tmp_dir,
+            query_fasta, args.target_db, output_a3m, tmp_dir,
             args.threads, args.num_iterations, args.sensitivity
         )
 
@@ -387,8 +387,12 @@ def main():
     parser.add_argument("--index", type=int,
                         help="1-based index into gene list "
                              "(from SLURM_ARRAY_TASK_ID)")
-    parser.add_argument("--uniref90-db",
-                        help="Path to MMseqs2 UniRef90 database prefix")
+    parser.add_argument("--target-db",
+                        help="Path to MMseqs2 target database prefix "
+                             "(e.g. UniRef30 or UniRef90)")
+    parser.add_argument("--uniref90-db", dest="target_db",
+                        help="(deprecated, use --target-db) "
+                             "Path to MMseqs2 database prefix")
     parser.add_argument("--tmp-dir", default="/tmp",
                         help="Temporary directory for MMseqs2 working files")
     parser.add_argument("--threads", type=int, default=4,
@@ -418,8 +422,8 @@ def main():
             sys.exit("Error: --gene-list required for MSA generation mode")
         if args.index is None:
             sys.exit("Error: --index required for MSA generation mode")
-        if not args.uniref90_db:
-            sys.exit("Error: --uniref90-db required for MSA generation mode")
+        if not args.target_db:
+            sys.exit("Error: --target-db required for MSA generation mode")
         if not os.path.isfile(args.gene_list):
             sys.exit(f"Error: Gene list not found: {args.gene_list}")
         if not os.path.isfile(args.ref_fasta):

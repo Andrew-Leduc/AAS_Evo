@@ -20,7 +20,7 @@
 #   2. GENCODE CDS regions → cds.chr.bed                    (~2 MB)
 #   3. UniProt human reference proteome (canonical)          (~25 MB)
 #   4. AlphaMissense pathogenicity data + tabix index        (~6 GB)
-#   5. UniRef90 database + MMseqs2 index                     (~28 GB + ~60 GB)
+#   5. UniRef30 ColabFold pre-built MMseqs2 database           (~68 GB + ~110 GB)
 #   6. VEP Apptainer container + cache                       (~15 GB)
 #
 # Usage:
@@ -165,38 +165,31 @@ fi
 echo ""
 
 # ============================================================
-# 5. UniRef90 Database (for MSA generation)
+# 5. UniRef30 Database (for MSA generation)
 # ============================================================
-# Source: UniProt Reference Clusters at 90% identity.
-# Large download (~28 GB compressed). MMseqs2 database (~60 GB).
+# Source: ColabFold pre-built UniRef30 MMseqs2 database (Mirdita et al., 2022).
+# Pre-indexed — no mmseqs createdb step needed.
+# Download: ~68 GB compressed. Extracted: ~110 GB.
+UNIREF30_DIR="${SEQ_DIR}/uniref30_2302"
 if [[ "$SKIP_LARGE" == true ]]; then
-    log "SKIP UniRef90 (--skip-large)"
-elif [[ -f "${SEQ_DIR}/uniref90.dbtype" || -f "${SEQ_DIR}/uniref90" ]]; then
-    log "SKIP UniRef90 MMseqs2 database (already exists)"
+    log "SKIP UniRef30 (--skip-large)"
+elif [[ -f "${UNIREF30_DIR}/uniref30_2302.dbtype" || -f "${UNIREF30_DIR}/uniref30_2302" ]]; then
+    log "SKIP UniRef30 MMseqs2 database (already exists)"
 else
-    UNIREF90_GZ="${SEQ_DIR}/uniref90.fasta.gz"
+    UNIREF30_GZ="${SEQ_DIR}/uniref30_2302.tar.gz"
 
-    if [[ ! -f "$UNIREF90_GZ" ]]; then
-        log "Downloading uniref90.fasta.gz (~28 GB)..."
-        wget -q -O "$UNIREF90_GZ" \
-            "https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref90/uniref90.fasta.gz"
+    if [[ ! -f "$UNIREF30_GZ" ]]; then
+        log "Downloading uniref30_2302.tar.gz (~68 GB)..."
+        wget --continue -O "$UNIREF30_GZ" \
+            "https://wwwuser.gwdg.de/~compbiol/colabfold/uniref30_2302.tar.gz"
     else
-        log "uniref90.fasta.gz already downloaded, building MMseqs2 database..."
+        log "uniref30_2302.tar.gz already downloaded, extracting..."
     fi
 
-    log "Building MMseqs2 database (this may take a while)..."
-    MMSEQS_BIN="mmseqs"
-    if ! command -v mmseqs &>/dev/null; then
-        if [[ -f "$HOME/bin/mmseqs/bin/mmseqs" ]]; then
-            MMSEQS_BIN="$HOME/bin/mmseqs/bin/mmseqs"
-        else
-            log "ERROR: mmseqs2 not found. Install or load module."
-            exit 1
-        fi
-    fi
-    "$MMSEQS_BIN" createdb "$UNIREF90_GZ" "${SEQ_DIR}/uniref90" --threads 4
+    log "Extracting UniRef30 database (this may take a while)..."
+    tar -xzf "$UNIREF30_GZ" -C "$SEQ_DIR"
 
-    log "DONE UniRef90 MMseqs2 database"
+    log "DONE UniRef30 MMseqs2 database"
 fi
 echo ""
 
@@ -263,7 +256,7 @@ check_file "${SEQ_DIR}/cds.chr.bed"                    "cds.chr.bed"
 check_file "${SEQ_DIR}/uniprot_human_canonical.fasta"  "uniprot_human_canonical.fasta"
 check_file "${SEQ_DIR}/AlphaMissense_hg38.tsv.gz"      "AlphaMissense_hg38.tsv.gz"
 check_file "${SEQ_DIR}/AlphaMissense_hg38.tsv.gz.tbi"  "AlphaMissense_hg38.tsv.gz.tbi"
-check_file "${SEQ_DIR}/uniref90.dbtype"                "UniRef90 MMseqs2 database"
+check_file "${UNIREF30_DIR}/uniref30_2302.dbtype"       "UniRef30 MMseqs2 database"
 check_file "${VEP_DIR}/ensembl-vep.sif"                "VEP Apptainer container"
 check_file "${SEQ_DIR}/vep_cache/homo_sapiens"         "VEP cache"
 echo ""
