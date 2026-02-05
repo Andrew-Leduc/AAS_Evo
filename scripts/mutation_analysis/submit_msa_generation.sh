@@ -140,9 +140,34 @@ fi
 
 cp "${MSA_OUT}/${OUT_FILES[0]}" "$OUTPUT_A3M"
 NSEQS=$(grep -c "^>" "$OUTPUT_A3M" || echo 0)
+
+# Compute MSA quality statistics
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+STATS_DIR="${DATA_DIR}/MSA_STATS"
+mkdir -p "$STATS_DIR"
+
+OUTPUT_STATS="${STATS_DIR}/${ACCESSION}.stats.json"
+echo ""
+echo "[$(date)] Computing MSA quality statistics..."
+
+# Run quality script (Python)
+module load python/3.8.1 2>/dev/null || true
+if python3 "${SCRIPTS_DIR}/msa_quality.py" "$OUTPUT_A3M" -o "$OUTPUT_STATS" 2>/dev/null; then
+    # Extract key metrics for log
+    NEFF=$(python3 -c "import json; d=json.load(open('$OUTPUT_STATS')); print(d.get('neff', 'NA'))" 2>/dev/null || echo "NA")
+    AVG_COV=$(python3 -c "import json; d=json.load(open('$OUTPUT_STATS')); print(d.get('avg_coverage', 'NA'))" 2>/dev/null || echo "NA")
+    FLAGS=$(python3 -c "import json; d=json.load(open('$OUTPUT_STATS')); print(','.join(d.get('quality_flags', [])) or 'OK')" 2>/dev/null || echo "NA")
+    echo "  Neff: $NEFF"
+    echo "  Avg coverage: $AVG_COV"
+    echo "  Quality flags: $FLAGS"
+else
+    echo "  (quality stats computation failed, continuing)"
+fi
+
 echo ""
 echo "[$(date)] Done."
 echo "Output: $OUTPUT_A3M"
+echo "Stats:  $OUTPUT_STATS"
 echo "Sequences: $NSEQS"
 
 # Cleanup

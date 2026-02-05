@@ -106,7 +106,7 @@ AAS_Evo_meta/
 │   ├── hg38.fa.fai                   # Reference index
 │   ├── cds.chr.bed                   # CDS regions (merged, GENCODE)
 │   ├── uniprot_human_canonical.fasta # UniProt reviewed proteome
-│   ├── uniref90                      # MMseqs2 UniRef90 database
+│   ├── uniref50                      # MMseqs2 UniRef90 database
 │   ├── AlphaMissense_hg38.tsv.gz     # AlphaMissense pathogenicity data
 │   └── AlphaMissense_hg38.tsv.gz.tbi # tabix index
 ├── ANALYSIS/                         # Mutation filtering & ranking output
@@ -313,29 +313,34 @@ The BAM processing pipeline extracts missense mutations for multi-omics integrat
 
 ## Proteogenomics Pipeline Details
 
-Generates custom protein FASTA search databases with sample-specific missense mutations and predicted compensatory entries.
+Generates custom FASTA search databases with tryptic peptides for sample-specific missense mutations and predicted compensatory entries.
+
+**Tryptic peptide approach**: Instead of adding full mutant proteins (~500 AA each), the pipeline extracts only tryptic peptides containing mutations (~15 AA avg, with 1 missed cleavage). This minimizes database size and improves FDR statistics.
+
+**Header format**: `>type|accession|gene|swap|source|patient|sample_type`
 
 1. **Per-sample mutant FASTAs** (`generate_mutant_fastas.py`)
    - Parses VEP `SYMBOL` column → looks up gene in UniProt via `GN=` header field
    - Parses mutation from `HGVSp` (e.g., `p.Arg273His`) or falls back to `Amino_acids` + `Protein_position`
    - Validates reference AA at position before substituting
+   - Extracts tryptic peptide(s) containing the mutation (K/R cleavage, not before P, 1 missed cleavage)
    - Filters common variants by `gnomADe_AF` threshold
-   - Headers: `>mut|P04637|TP53_R273H OS=Homo sapiens GN=TP53`
-   - Multiple mutations in same gene → separate entries (standard SAV approach)
+   - Headers: `>mut|P04637|TP53|R273H|genetic`
    - Logs issues to `generation_summary.tsv` and `generation_issues.tsv`
 
 2. **Compensatory FASTAs** (`generate_compensatory_fastas.py`)
    - Reads coevolution predictions → applies both original + compensatory mutation to reference
-   - Headers: `>comp|P04637|TP53_R273H_comp_G245S OS=Homo sapiens GN=TP53`
+   - Extracts tryptic peptide(s) containing mutation positions
+   - Headers: `>comp|P04637|TP53|R273H_G245S|predicted`
    - Validates both mutation positions against reference, deduplicates within gene
    - Output: per-gene FASTAs + consolidated `all_compensatory.fasta`
 
 3. **Per-plex FASTAs** (`combine_plex_fastas.py`)
    - Linking: `run_metadata_id` → `case_submitter_id` (via TMT map) → GDC UUID (via GDC meta) → mutant FASTA
-   - Each plex FASTA = reference proteome + deduplicated mutant entries + plex-specific compensatory entries
+   - Each plex FASTA = reference proteome + deduplicated mutant peptides + plex-specific compensatory peptides
    - Compensatory entries are **plex-specific**: only included if the original mutation is observed in that plex
-   - Compensatory headers annotated with patient info: `SAMPLES=C3L-00001(tumor),C3L-00002(tumor)`
-   - Deduplication by mutation identity (accession + mutation label)
+   - Adds patient info to headers: `>mut|P04637|TP53|R273H|genetic|C3L-00001|tumor`
+   - Deduplication by peptide sequence + mutation identity
    - Three FASTA header prefixes: `sp|`/`tr|` (reference), `mut|` (observed), `comp|` (compensatory)
 
 4. **Reference proteome**: UniProt reviewed human canonical (~20,400 proteins, ~25MB)
@@ -449,11 +454,11 @@ wget -O uniprot_human_canonical.fasta \
 Source: UniProt Reference Clusters at 90% identity
 ```bash
 # Download FASTA (~28 GB compressed)
-wget -O uniref90.fasta.gz \
-    https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref90/uniref90.fasta.gz
+wget -O uniref50.fasta.gz \
+    https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref50/uniref50.fasta.gz
 
 # Build MMseqs2 database (~60 GB on disk)
-mmseqs createdb uniref90.fasta.gz SEQ_FILES/uniref90
+mmseqs createdb uniref50.fasta.gz SEQ_FILES/uniref50
 ```
 Used by `generate_msas.py` for MSA generation via MMseqs2 profile search.
 

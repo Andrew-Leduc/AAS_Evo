@@ -81,18 +81,20 @@ AAS_Evo/
 
 ```
 Download BAMs → Variant Call → VEP (+ AlphaMissense) → Consolidate
-    ↓
-Filter & Rank Mutations (top 5000)
-    ↓                          ↘
-Generate MSAs (MMseqs2)    Generate Per-Sample Mutant FASTAs
-    ↓                          ↓
-Coevolution Analysis           ↓
-    ↓                          ↓
-Compensatory FASTAs            ↓
-    ↓                          ↓
-Combine Per-Plex FASTAs (ref + observed + compensatory)
-    ↓
-FragPipe MS Search (per plex)
+    ↓                                                       ↓
+    ↓                                           All Missense Mutations
+    ↓                                                       ↓
+Filter & Rank (top 5000)                      Per-Sample Mutant FASTAs
+    ↓                                                       ↓
+Generate MSAs (MMseqs2)                                     ↓
+    ↓                                                       ↓
+Coevolution Analysis                                        ↓
+    ↓                                                       ↓
+Compensatory FASTAs ─────────────────────────────────────→  ↓
+                                                            ↓
+                              Combine Per-Plex FASTAs (ref + observed + compensatory)
+                                                            ↓
+                                              FragPipe MS Search (per plex)
 ```
 
 ## Workflows
@@ -190,7 +192,7 @@ Output: `COEVOL/compensatory_predictions.tsv`
 sbatch scripts/fasta_gen/submit_compensatory_fastas.sh
 ```
 
-Output: `FASTA/compensatory/all_compensatory.fasta` — each entry contains both the original destabilizing mutation and the predicted compensatory substitution applied to the reference protein.
+Output: `FASTA/compensatory/all_compensatory.fasta` — tryptic peptides containing both the original destabilizing mutation and the predicted compensatory substitution.
 
 ### 8. Proteogenomics FASTA Generation
 
@@ -200,7 +202,22 @@ Output: `FASTA/compensatory/all_compensatory.fasta` — each entry contains both
 sbatch scripts/fasta_gen/submit_proteogenomics.sh
 ```
 
-Creates custom MS search databases per TMT plex: reference proteome + plex-specific observed mutations + plex-specific compensatory entries. Compensatory headers include patient IDs and tumor/normal status.
+Creates custom MS search databases per TMT plex: reference proteome + plex-specific mutant tryptic peptides + plex-specific compensatory peptides.
+
+**Tryptic peptide approach**: Instead of adding full mutant proteins (~500 AA each), the pipeline extracts only tryptic peptides containing mutations (~15 AA avg). This minimizes database size and improves FDR statistics.
+
+**Header format**:
+```
+# Observed mutations (from VEP):
+>mut|P04637|TP53|R273H|genetic|C3L-00001|tumor
+SVTCTYSPALNKMFCQLAK
+
+# Predicted compensatory mutations (from coevolution):
+>comp|P04637|TP53|R273H_G245S|predicted|C3L-00001|tumor
+SVTCTYSPALNKMFCQLAK
+```
+
+Fields: `type|accession|gene|swap|source|patient|sample_type`
 
 ### 9. MS Database Search (FragPipe)
 
@@ -227,7 +244,7 @@ All reference files are downloaded and indexed by `scripts/setup/setup_seq_files
 | `cds.chr.bed` | GENCODE v46 CDS regions (merged, standard chromosomes) | ~2 MB |
 | `uniprot_human_canonical.fasta` | UniProt reference proteome UP000005640 (reviewed, canonical) | ~25 MB |
 | `AlphaMissense_hg38.tsv.gz` + `.tbi` | DeepMind AlphaMissense pathogenicity predictions | ~6 GB |
-| `uniref90` (MMseqs2 db) | UniProt Reference Clusters at 90% identity | ~60 GB |
+| `uniref50` (MMseqs2 db) | UniProt Reference Clusters at 50% identity | ~24 GB |
 | VEP container + cache | Ensembl VEP Apptainer image | ~15 GB |
 
 ## Requirements

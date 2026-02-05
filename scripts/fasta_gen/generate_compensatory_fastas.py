@@ -2,12 +2,18 @@
 """
 generate_compensatory_fastas.py
 
-Generate FASTA entries containing predicted compensatory mutations for MS search.
+Generate tryptic peptide FASTA entries for predicted compensatory mutations.
 
 For each compensatory prediction from coevolution analysis, applies both the
-original destabilizing mutation AND the predicted compensatory substitution to
-the reference protein sequence. This allows detection of compensatory
-translation errors via mass spectrometry.
+original destabilizing mutation AND the predicted compensatory substitution,
+then extracts the tryptic peptide(s) containing the mutations.
+
+Header format:
+    >comp|{accession}|{gene}|{orig_swap}_{comp_swap}|predicted
+
+Example:
+    >comp|P04637|TP53|R273H_G245S|predicted
+    SVTCTYSPALNKMFCQLAK
 
 Usage:
     python3 generate_compensatory_fastas.py \
@@ -30,7 +36,7 @@ from collections import defaultdict
 
 
 # ---------------------------------------------------------------------------
-# Helper functions (duplicated from coevolution_analysis.py per project convention)
+# Helper functions
 # ---------------------------------------------------------------------------
 
 def parse_reference_fasta(fasta_path):
@@ -91,6 +97,68 @@ def safe_float(val, default=None):
         return float(val)
     except (ValueError, TypeError):
         return default
+
+
+def find_tryptic_cleavage_sites(sequence):
+    """
+    Find tryptic cleavage sites in a protein sequence.
+
+    Trypsin cleaves after K or R, unless followed by P.
+
+    Returns list of cleavage positions (0-indexed, position AFTER which cleavage occurs).
+    Includes 0 (start) and len(sequence) (end) as boundaries.
+    """
+    sites = [0]  # Start of protein
+    for i, aa in enumerate(sequence):
+        if aa in ('K', 'R'):
+            if i + 1 < len(sequence) and sequence[i + 1] == 'P':
+                continue  # No cleavage before proline
+            sites.append(i + 1)
+    sites.append(len(sequence))
+    return sites
+
+
+def extract_tryptic_peptides(sequence, mutation_positions, max_missed_cleavages=1):
+    """
+    Extract tryptic peptide(s) containing any of the mutation positions.
+
+    Args:
+        sequence: Full protein sequence (with mutations already applied)
+        mutation_positions: List of 1-based positions
+        max_missed_cleavages: Include peptides with up to this many missed cleavages
+
+    Returns:
+        List of unique (peptide_seq, positions_in_peptide) tuples
+    """
+    sites = find_tryptic_cleavage_sites(sequence)
+    mut_indices = [p - 1 for p in mutation_positions]  # Convert to 0-based
+
+    peptides = {}  # peptide_seq -> set of mutation positions it contains
+
+    for i in range(len(sites) - 1):
+        for missed in range(max_missed_cleavages + 1):
+            if i + missed + 1 >= len(sites):
+                break
+
+            start = sites[i]
+            end = sites[i + missed + 1]
+
+            # Check which mutations this peptide contains
+            contained_muts = []
+            for mut_idx, mut_pos in zip(mut_indices, mutation_positions):
+                if start <= mut_idx < end:
+                    contained_muts.append(mut_pos)
+
+            if contained_muts:
+                peptide = sequence[start:end]
+                # Filter out very short or very long peptides
+                if 6 <= len(peptide) <= 50:
+                    key = peptide
+                    if key not in peptides:
+                        peptides[key] = set()
+                    peptides[key].update(contained_muts)
+
+    return [(pep, sorted(pos)) for pep, pos in peptides.items()]
 
 
 # ---------------------------------------------------------------------------
@@ -186,16 +254,9 @@ def apply_mutations(seq, mutations):
     return "".join(seq_list)
 
 
-def write_fasta_entry(f, header, sequence, line_width=60):
-    """Write a single FASTA entry."""
-    f.write(header + "\n")
-    for i in range(0, len(sequence), line_width):
-        f.write(sequence[i:i + line_width] + "\n")
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate FASTA entries with compensatory mutations for MS search"
+        description="Generate tryptic peptide FASTAs with compensatory mutations"
     )
     parser.add_argument("--predictions", required=True,
                         help="Compensatory predictions TSV from coevolution analysis")
@@ -269,7 +330,7 @@ def main():
     stats = {
         "genes_processed": 0,
         "genes_skipped_no_ref": 0,
-        "entries_written": 0,
+        "peptides_written": 0,
         "entries_skipped_pos_mismatch": 0,
         "entries_deduplicated": 0,
     }
@@ -300,7 +361,9 @@ def main():
                 else:
                     stats["entries_deduplicated"] += 1
 
-        gene_entries = 0
+        gene_peptides = 0
+        seen_peptides = set()  # Deduplicate peptide sequences
+
         gene_fasta_path = os.path.join(args.output, f"{gene}_compensatory.fasta")
 
         with open(gene_fasta_path, "w") as gene_f:
@@ -341,24 +404,45 @@ def main():
                     stats["entries_skipped_pos_mismatch"] += 1
                     continue
 
-                # Header format: >comp|P04637|TP53_R273H_comp_G245S OS=Homo sapiens GN=TP53
-                mut_label = f"{gene}_{pred['orig_mutation']}_comp_{comp_wt}{comp_pos}{comp_alt}"
-                header = f">comp|{accession}|{mut_label} OS=Homo sapiens GN={gene}"
+                # Extract tryptic peptide(s) containing either mutation
+                peptides = extract_tryptic_peptides(
+                    mutant_seq,
+                    [orig_pos, comp_pos],
+                    max_missed_cleavages=1
+                )
 
-                write_fasta_entry(gene_f, header, mutant_seq)
-                write_fasta_entry(consolidated_f, header, mutant_seq)
-                gene_entries += 1
+                if not peptides:
+                    continue
 
-        if gene_entries == 0:
+                # Header format: >comp|P04637|TP53|R273H_G245S|predicted
+                orig_swap = f"{orig_ref}{orig_pos}{orig_alt}"
+                comp_swap = f"{comp_wt}{comp_pos}{comp_alt}"
+
+                for peptide, positions in peptides:
+                    # Deduplicate peptide sequences per gene
+                    pep_key = (accession, orig_swap, comp_swap, peptide)
+                    if pep_key in seen_peptides:
+                        continue
+                    seen_peptides.add(pep_key)
+
+                    header = f">comp|{accession}|{gene}|{orig_swap}_{comp_swap}|predicted"
+
+                    gene_f.write(header + "\n")
+                    gene_f.write(peptide + "\n")
+                    consolidated_f.write(header + "\n")
+                    consolidated_f.write(peptide + "\n")
+                    gene_peptides += 1
+
+        if gene_peptides == 0:
             # Remove empty per-gene FASTA
             os.remove(gene_fasta_path)
         else:
             stats["genes_processed"] += 1
-            stats["entries_written"] += gene_entries
+            stats["peptides_written"] += gene_peptides
             summary_rows.append({
                 "gene": gene,
                 "accession": accession,
-                "n_entries": gene_entries,
+                "n_peptides": gene_peptides,
                 "protein_length": len(ref_seq),
             })
 
@@ -368,20 +452,20 @@ def main():
     summary_path = os.path.join(args.output, "compensatory_summary.tsv")
     with open(summary_path, "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
-        writer.writerow(["gene", "accession", "n_entries", "protein_length"])
+        writer.writerow(["gene", "accession", "n_peptides", "protein_length"])
         for row in summary_rows:
             writer.writerow([
                 row["gene"], row["accession"],
-                row["n_entries"], row["protein_length"],
+                row["n_peptides"], row["protein_length"],
             ])
 
     # Print summary
     print(f"\n{'=' * 50}")
-    print("Compensatory FASTA Generation Summary")
+    print("Compensatory Tryptic Peptide FASTA Generation Summary")
     print(f"{'=' * 50}")
     print(f"Genes processed:         {stats['genes_processed']}")
     print(f"Genes skipped (no ref):  {stats['genes_skipped_no_ref']}")
-    print(f"FASTA entries written:   {stats['entries_written']}")
+    print(f"Peptides written:        {stats['peptides_written']}")
     print(f"Entries deduplicated:    {stats['entries_deduplicated']}")
     print(f"Entries skipped (pos):   {stats['entries_skipped_pos_mismatch']}")
     print(f"Output:                  {consolidated_path}")

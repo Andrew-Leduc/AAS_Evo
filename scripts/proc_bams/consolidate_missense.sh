@@ -25,7 +25,7 @@ for tsv in "$VEP_DIR"/*.vep.tsv; do
     if [[ -f "$tsv" ]]; then
         # Skip header line, append data
         tail -n +2 "$tsv" >> "$OUTPUT"
-        ((count++))
+        ((++count))
     fi
 done
 

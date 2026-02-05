@@ -2,12 +2,23 @@
 """
 generate_mutant_fastas.py
 
-Generate per-sample mutant protein FASTA files from VEP missense output.
+Generate per-sample mutant tryptic peptide FASTA files from VEP missense output.
 
 For each sample's missense mutations:
   - Look up the gene in the reference proteome (UniProt canonical)
   - Validate the reference amino acid at the mutation position
-  - Apply the substitution and write a mutant FASTA entry
+  - Extract the tryptic peptide(s) containing the mutation (with 1 missed cleavage)
+  - Write mutant peptide FASTA entries
+
+This outputs tryptic peptides only (not full proteins) to minimize FASTA size
+and improve FDR statistics during MS database search.
+
+Header format:
+    >mut|{accession}|{gene}|{swap}|genetic
+
+Example:
+    >mut|P04637|TP53|R273H|genetic
+    SVTCTYSPALNKMFCQLAK
 
 Usage:
     python3 generate_mutant_fastas.py \
@@ -104,12 +115,78 @@ def parse_reference_fasta(fasta_path):
     return gene_to_protein, accession_to_seq
 
 
+def find_tryptic_cleavage_sites(sequence):
+    """
+    Find tryptic cleavage sites in a protein sequence.
+
+    Trypsin cleaves after K or R, unless followed by P.
+
+    Returns list of cleavage positions (0-indexed, position AFTER which cleavage occurs).
+    Includes 0 (start) and len(sequence) (end) as boundaries.
+    """
+    sites = [0]  # Start of protein
+    for i, aa in enumerate(sequence):
+        # Cleave after K or R, unless followed by P
+        if aa in ('K', 'R'):
+            if i + 1 < len(sequence) and sequence[i + 1] == 'P':
+                continue  # No cleavage before proline
+            sites.append(i + 1)  # Position after this residue
+    sites.append(len(sequence))  # End of protein
+    return sites
+
+
+def extract_tryptic_peptides(sequence, mutation_pos, max_missed_cleavages=1):
+    """
+    Extract tryptic peptide(s) containing a mutation position.
+
+    Args:
+        sequence: Full protein sequence (with mutation already applied)
+        mutation_pos: 1-based position of the mutation
+        max_missed_cleavages: Include peptides with up to this many missed cleavages
+
+    Returns:
+        List of unique peptide sequences containing the mutation
+    """
+    sites = find_tryptic_cleavage_sites(sequence)
+    mut_idx = mutation_pos - 1  # Convert to 0-based
+
+    peptides = set()
+
+    # Find all peptide windows that contain the mutation position
+    for i in range(len(sites) - 1):
+        for missed in range(max_missed_cleavages + 1):
+            if i + missed + 1 >= len(sites):
+                break
+
+            start = sites[i]
+            end = sites[i + missed + 1]
+
+            # Check if this peptide contains the mutation
+            if start <= mut_idx < end:
+                peptide = sequence[start:end]
+                # Filter out very short or very long peptides
+                if 6 <= len(peptide) <= 50:
+                    peptides.add(peptide)
+
+    return list(peptides)
+
+
 def parse_mutation(hgvsp, amino_acids, protein_position):
     """
     Parse a missense mutation from VEP output.
 
-    Returns (ref_aa_1letter, position_1based, alt_aa_1letter) or None if unparseable.
+    Returns (ref_aa_1letter, position_1based, alt_aa_1letter, vep_protein_length)
+    or None if unparseable. vep_protein_length may be None if not available.
     """
+    vep_length = None
+
+    # Parse VEP protein length from Protein_position (e.g., "273/393" -> 393)
+    if protein_position and "/" in protein_position:
+        try:
+            vep_length = int(protein_position.split("/")[1])
+        except (ValueError, IndexError):
+            pass
+
     # Try HGVSp first
     if hgvsp and hgvsp not in ("", "-", "NA"):
         m = HGVSP_PATTERN.search(hgvsp)
@@ -120,15 +197,17 @@ def parse_mutation(hgvsp, amino_acids, protein_position):
             ref_1 = AA3_TO_1.get(ref_3)
             alt_1 = AA3_TO_1.get(alt_3)
             if ref_1 and alt_1:
-                return ref_1, pos, alt_1
+                return ref_1, pos, alt_1, vep_length
 
-    # Fallback: Amino_acids (e.g. "R/H") + Protein_position (e.g. "273")
+    # Fallback: Amino_acids (e.g. "R/H") + Protein_position (e.g. "273" or "273/393")
     if amino_acids and "/" in amino_acids and protein_position:
         parts = amino_acids.split("/")
         if len(parts) == 2 and len(parts[0]) == 1 and len(parts[1]) == 1:
             try:
-                pos = int(protein_position)
-                return parts[0], pos, parts[1]
+                # Handle both "273" and "273/393" formats
+                pos_str = protein_position.split("/")[0] if "/" in protein_position else protein_position
+                pos = int(pos_str)
+                return parts[0], pos, parts[1], vep_length
             except ValueError:
                 pass
 
@@ -137,15 +216,17 @@ def parse_mutation(hgvsp, amino_acids, protein_position):
 
 def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
     """
-    Process one VEP TSV file and generate a mutant FASTA.
+    Process one VEP TSV file and generate a mutant tryptic peptide FASTA.
 
     Returns dict with counts: applied, skipped_gene, skipped_mismatch,
         skipped_vaf, skipped_gnomad, skipped_parse, skipped_dup
     """
     counts = {
         "applied": 0,
+        "peptides": 0,
         "skipped_gene": 0,
         "skipped_mismatch": 0,
+        "skipped_length_mismatch": 0,
         "skipped_vaf": 0,
         "skipped_gnomad": 0,
         "skipped_parse": 0,
@@ -153,6 +234,7 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
     }
     log_entries = []  # (status, gene, detail)
     seen_mutations = set()  # (gene, ref, pos, alt) to deduplicate
+    seen_peptides = set()  # Deduplicate peptide sequences
 
     sample_id = os.path.basename(tsv_path).replace(".vep.tsv", "")
     out_path = os.path.join(out_dir, f"{sample_id}_mutant.fasta")
@@ -196,7 +278,7 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
                                     f"HGVSp={hgvsp} AA={amino_acids} pos={protein_position}"))
                 continue
 
-            ref_aa, pos, alt_aa = mutation
+            ref_aa, pos, alt_aa, vep_length = mutation
 
             # Deduplicate within sample
             mut_key = (symbol, ref_aa, pos, alt_aa)
@@ -212,12 +294,22 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
                 continue
 
             accession, entry_name, ref_seq = gene_to_protein[symbol]
+            uniprot_length = len(ref_seq)
+
+            # Validate protein length matches (VEP uses Ensembl, we use UniProt)
+            # Allow small differences (±5 AA) for signal peptide/initiator Met variations
+            if vep_length is not None and abs(vep_length - uniprot_length) > 5:
+                counts["skipped_length_mismatch"] += 1
+                log_entries.append(("LENGTH_MISMATCH", symbol,
+                                    f"VEP_len={vep_length} UniProt_len={uniprot_length} "
+                                    f"diff={vep_length - uniprot_length} pos={pos}"))
+                continue
 
             # Validate position (1-based)
-            if pos < 1 or pos > len(ref_seq):
+            if pos < 1 or pos > uniprot_length:
                 counts["skipped_mismatch"] += 1
                 log_entries.append(("POS_OUT_OF_RANGE", symbol,
-                                    f"pos={pos} len={len(ref_seq)}"))
+                                    f"pos={pos} len={uniprot_length}"))
                 continue
 
             # Validate reference amino acid
@@ -227,14 +319,31 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
                                     f"expected={ref_aa} found={ref_seq[pos - 1]} pos={pos}"))
                 continue
 
-            # Apply substitution
+            # Apply substitution to get mutant sequence
             mutant_seq = ref_seq[:pos - 1] + alt_aa + ref_seq[pos:]
 
-            # Build header: >mut|P04637|TP53_R273H OS=Homo sapiens GN=TP53
-            mut_label = f"{symbol}_{ref_aa}{pos}{alt_aa}"
-            header = f">mut|{accession}|{mut_label} OS=Homo sapiens GN={symbol}"
+            # Extract tryptic peptide(s) containing the mutation
+            peptides = extract_tryptic_peptides(mutant_seq, pos, max_missed_cleavages=1)
 
-            entries.append((header, mutant_seq))
+            if not peptides:
+                log_entries.append(("NO_PEPTIDE", symbol,
+                                    f"pos={pos} - no valid tryptic peptide"))
+                continue
+
+            # Build header: >mut|P04637|TP53|R273H|genetic
+            swap = f"{ref_aa}{pos}{alt_aa}"
+
+            for peptide in peptides:
+                # Deduplicate peptides across mutations
+                pep_key = (accession, swap, peptide)
+                if pep_key in seen_peptides:
+                    continue
+                seen_peptides.add(pep_key)
+
+                header = f">mut|{accession}|{symbol}|{swap}|genetic"
+                entries.append((header, peptide))
+                counts["peptides"] += 1
+
             counts["applied"] += 1
 
     # Write FASTA (only if there are entries)
@@ -242,16 +351,14 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
         with open(out_path, "w") as out:
             for header, seq in entries:
                 out.write(header + "\n")
-                # Write sequence in 60-char lines
-                for i in range(0, len(seq), 60):
-                    out.write(seq[i:i + 60] + "\n")
+                out.write(seq + "\n")
 
     return counts, log_entries, sample_id
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate per-sample mutant protein FASTAs from VEP output."
+        description="Generate per-sample mutant tryptic peptide FASTAs from VEP output."
     )
     parser.add_argument("--ref-fasta", required=True,
                         help="UniProt reference proteome FASTA")
@@ -294,14 +401,15 @@ def main():
     summary_path = os.path.join(args.output, "generation_summary.tsv")
     all_logs = []
     totals = {
-        "applied": 0, "skipped_gene": 0, "skipped_mismatch": 0,
-        "skipped_vaf": 0, "skipped_gnomad": 0, "skipped_parse": 0,
-        "skipped_dup": 0,
+        "applied": 0, "peptides": 0, "skipped_gene": 0, "skipped_mismatch": 0,
+        "skipped_length_mismatch": 0, "skipped_vaf": 0, "skipped_gnomad": 0,
+        "skipped_parse": 0, "skipped_dup": 0,
     }
 
     with open(summary_path, "w") as summary_f:
-        summary_f.write("sample_id\tapplied\tskipped_gene\tskipped_mismatch\t"
-                        "skipped_vaf\tskipped_gnomad\tskipped_parse\tskipped_dup\n")
+        summary_f.write("sample_id\tmutations_applied\tpeptides_written\tskipped_gene\t"
+                        "skipped_mismatch\tskipped_length_mismatch\tskipped_vaf\t"
+                        "skipped_gnomad\tskipped_parse\tskipped_dup\n")
 
         for tsv in tsv_files:
             counts, log_entries, sample_id = process_sample(
@@ -309,10 +417,11 @@ def main():
                 args.min_vaf, args.max_gnomad_af
             )
 
-            summary_f.write(f"{sample_id}\t{counts['applied']}\t"
+            summary_f.write(f"{sample_id}\t{counts['applied']}\t{counts['peptides']}\t"
                             f"{counts['skipped_gene']}\t{counts['skipped_mismatch']}\t"
-                            f"{counts['skipped_vaf']}\t{counts['skipped_gnomad']}\t"
-                            f"{counts['skipped_parse']}\t{counts['skipped_dup']}\n")
+                            f"{counts['skipped_length_mismatch']}\t{counts['skipped_vaf']}\t"
+                            f"{counts['skipped_gnomad']}\t{counts['skipped_parse']}\t"
+                            f"{counts['skipped_dup']}\n")
 
             for key in totals:
                 totals[key] += counts[key]
@@ -330,16 +439,18 @@ def main():
 
     # Print summary
     print(f"\n{'='*50}")
-    print(f"Mutant FASTA Generation Summary")
+    print(f"Mutant Tryptic Peptide FASTA Generation Summary")
     print(f"{'='*50}")
-    print(f"Samples processed:  {len(tsv_files)}")
-    print(f"Mutations applied:  {totals['applied']}")
-    print(f"Skipped (no gene):  {totals['skipped_gene']}")
-    print(f"Skipped (mismatch): {totals['skipped_mismatch']}")
-    print(f"Skipped (low VAF):  {totals['skipped_vaf']}")
-    print(f"Skipped (gnomAD):   {totals['skipped_gnomad']}")
-    print(f"Skipped (parse):    {totals['skipped_parse']}")
-    print(f"Skipped (dup):      {totals['skipped_dup']}")
+    print(f"Samples processed:    {len(tsv_files)}")
+    print(f"Mutations applied:    {totals['applied']}")
+    print(f"Peptides written:     {totals['peptides']}")
+    print(f"Skipped (no gene):    {totals['skipped_gene']}")
+    print(f"Skipped (AA mismatch):{totals['skipped_mismatch']}")
+    print(f"Skipped (len mismatch):{totals['skipped_length_mismatch']}")
+    print(f"Skipped (low VAF):    {totals['skipped_vaf']}")
+    print(f"Skipped (gnomAD):     {totals['skipped_gnomad']}")
+    print(f"Skipped (parse):      {totals['skipped_parse']}")
+    print(f"Skipped (dup):        {totals['skipped_dup']}")
     print(f"Summary: {summary_path}")
     print(f"Output:  {args.output}")
 
