@@ -70,7 +70,8 @@ if [[ ! -f "$REF_FASTA" ]]; then
 fi
 
 # Check target database exists (mmseqs dbs have multiple files)
-if [[ ! -f "${TARGET_DB}.dbtype" ]] && [[ ! -f "${TARGET_DB}" ]]; then
+# ColabFold UniRef30 uses .tsv files; standard mmseqs dbs have .dbtype
+if [[ ! -f "${TARGET_DB}.dbtype" ]] && [[ ! -f "${TARGET_DB}.tsv" ]] && [[ ! -f "${TARGET_DB}" ]]; then
     echo "ERROR: Target database not found: $TARGET_DB"
     echo "Download with: sbatch scripts/setup/download_uniref30.sh"
     exit 1
