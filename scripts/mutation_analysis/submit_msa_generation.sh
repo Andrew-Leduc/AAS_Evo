@@ -120,7 +120,8 @@ echo "[$(date)] Searching target DB (iters=$NUM_ITERS, sens=$SENSITIVITY)..."
 mmseqs search "$QUERY_DB" "$TARGET_DB" "$RESULT_DB" "$MMSEQS_TMP" \
     --num-iterations "$NUM_ITERS" \
     -s "$SENSITIVITY" \
-    --threads "$THREADS"
+    --threads "$THREADS" \
+    --split 1
 
 echo "[$(date)] Converting results to A3M..."
 mmseqs result2msa "$QUERY_DB" "$TARGET_DB" "$RESULT_DB" "$MSA_DB" \
