@@ -45,7 +45,10 @@ else
     GENE_LIST="${DATA_DIR}/gene_list.txt"
 fi
 REF_FASTA="${DATA_DIR}/SEQ_FILES/uniprot_human_canonical.fasta"
-TARGET_DB="${DATA_DIR}/SEQ_FILES/uniref30_2302"
+# UniRef50 database (built with mmseqs createdb from FASTA)
+# Note: UniRef50 is a good middle ground - ~70M sequences, faster than UniRef90
+# Build with: sbatch scripts/setup/build_uniref50_db.sh
+TARGET_DB="${DATA_DIR}/SEQ_FILES/uniref50"
 MSA_DIR="${DATA_DIR}/MSA"
 TMP_DIR="${DATA_DIR}/tmp/msa_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 # --------------------------
@@ -70,10 +73,9 @@ if [[ ! -f "$REF_FASTA" ]]; then
 fi
 
 # Check target database exists (mmseqs dbs have multiple files)
-# ColabFold UniRef30 uses .tsv files; standard mmseqs dbs have .dbtype
-if [[ ! -f "${TARGET_DB}.dbtype" ]] && [[ ! -f "${TARGET_DB}.tsv" ]] && [[ ! -f "${TARGET_DB}" ]]; then
+if [[ ! -f "${TARGET_DB}.dbtype" ]] && [[ ! -f "${TARGET_DB}" ]]; then
     echo "ERROR: Target database not found: $TARGET_DB"
-    echo "Download with: sbatch scripts/setup/download_uniref30.sh"
+    echo "Build with: sbatch scripts/setup/build_uniref50_db.sh"
     exit 1
 fi
 
