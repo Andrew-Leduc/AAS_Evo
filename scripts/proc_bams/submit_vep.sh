@@ -30,8 +30,12 @@ VCF_LIST="${DATA_DIR}/vcf_list.txt"
 SIF="/scratch/leduc.an/tools/vep/ensembl-vep.sif"
 VEP_CACHE="${DATA_DIR}/SEQ_FILES/vep_cache"
 FASTA="${DATA_DIR}/SEQ_FILES/hg38.fa"
-OUTDIR="${DATA_DIR}/VEP"
 ALPHAMISSENSE="${DATA_DIR}/SEQ_FILES/AlphaMissense_hg38.tsv.gz"
+
+# Per-chunk directories (CHUNK_NAME passed via --export from run_pipeline.sh)
+CHUNK_NAME="${CHUNK_NAME:?ERROR: CHUNK_NAME not set. Use run_pipeline.sh or pass via --export}"
+VCF_CHUNK_DIR="${DATA_DIR}/VCF/${CHUNK_NAME}"
+OUTDIR="${DATA_DIR}/VEP/${CHUNK_NAME}"
 # --------------------------
 
 mkdir -p "$OUTDIR"
@@ -73,7 +77,7 @@ echo "[$(date)] Running VEP on: $SAMPLE_ID" | tee "$LOG"
 apptainer exec \
     -B "${VEP_CACHE}":/cache \
     -B "$(dirname "$FASTA")":/ref \
-    -B "$(dirname "$VCF")":/input \
+    -B "${VCF_CHUNK_DIR}":/input \
     -B "$OUTDIR":/output \
     -B "$(dirname "$ALPHAMISSENSE")":/alphamissense \
     "${SIF}" \

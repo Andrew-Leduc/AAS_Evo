@@ -27,11 +27,15 @@
 set -euo pipefail
 
 # --------- PATHS ----------
-BAM_LIST="/scratch/leduc.an/AAS_Evo/bam_list.txt"
-REF="/scratch/leduc.an/AAS_Evo/SEQ_FILES/hg38.fa"
-CDS_BED="/scratch/leduc.an/AAS_Evo/SEQ_FILES/cds.chr.bed"  # Coding regions only (speeds up ~10x)
-OUTDIR="/scratch/leduc.an/AAS_Evo/VCF"
+DATA_DIR="/scratch/leduc.an/AAS_Evo"
+BAM_LIST="${DATA_DIR}/bam_list.txt"
+REF="${DATA_DIR}/SEQ_FILES/hg38.fa"
+CDS_BED="${DATA_DIR}/SEQ_FILES/cds.chr.bed"  # Coding regions only (speeds up ~10x)
 MIN_DP=10
+
+# Per-chunk output directory (CHUNK_NAME passed via --export from run_pipeline.sh)
+CHUNK_NAME="${CHUNK_NAME:?ERROR: CHUNK_NAME not set. Use run_pipeline.sh or pass via --export}"
+OUTDIR="${DATA_DIR}/VCF/${CHUNK_NAME}"
 # --------------------------
 
 # Load modules

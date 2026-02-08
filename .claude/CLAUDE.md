@@ -103,8 +103,15 @@ AAS_Evo_meta/
 /scratch/leduc.an/AAS_Evo/
 ├── BAMS/                             # GDC BAM files (by UUID subdirectory)
 ├── RAW/                              # PDC RAW files
-├── VCF/                              # Variant calls (from BAM processing)
-├── VEP/                              # VEP annotations + missense tables
+├── VCF/                              # Variant calls (per-chunk subdirectories)
+│   ├── chunk_00/                     # VCFs from first BAM chunk
+│   ├── chunk_01/                     # VCFs from second BAM chunk
+│   └── ...
+├── VEP/                              # VEP annotations (per-chunk subdirectories)
+│   ├── chunk_00/                     # VEP output from first chunk
+│   ├── chunk_01/                     # VEP output from second chunk
+│   ├── ...
+│   └── all_missense_mutations.tsv    # Consolidated (top-level, from consolidate_missense.sh)
 ├── SEQ_FILES/                        # Reference files
 │   ├── hg38.fa                       # Human reference genome (GRCh38, UCSC)
 │   ├── hg38.fa.fai                   # Reference index
@@ -184,21 +191,22 @@ bash scripts/setup/setup_seq_files.sh --skip-large
 
 ### 5. Download & Process BAMs (Chunked)
 
-BAMs are processed in chunks of ~500 to stay within scratch storage limits.
-VCF/VEP outputs persist across chunks; only BAMs are deleted between chunks.
+BAMs are processed in chunks of ~400 to stay within scratch storage limits.
+VCF/VEP outputs are stored in per-chunk subdirectories (e.g. `VCF/chunk_00/`,
+`VEP/chunk_00/`). The chunk name must be passed to `run_pipeline.sh`.
 
 ```bash
-# One-time: split manifest into 500-BAM chunks
-bash scripts/download/gdc/setup_chunks.sh
+# One-time: split manifest into 400-BAM chunks
+bash scripts/download/gdc/setup_chunks.sh 400 path/to/manifest_wxs_bams_tissue.tsv
 
 # Per chunk (repeat for each chunk manifest):
-bash scripts/download/gdc/submit_download.sh path/to/chunk_00.tsv
+bash scripts/download/gdc/submit_download.sh path/to/chunks/chunk_00.tsv
 
-# Step 1: Variant calling (finds BAMs automatically)
-bash scripts/proc_bams/run_pipeline.sh variant-call
+# Step 1: Variant calling (finds BAMs automatically, outputs to VCF/chunk_00/)
+bash scripts/proc_bams/run_pipeline.sh variant-call chunk_00
 
-# Step 2: VEP annotation (finds VCFs automatically)
-bash scripts/proc_bams/run_pipeline.sh vep
+# Step 2: VEP annotation (reads VCF/chunk_00/, outputs to VEP/chunk_00/)
+bash scripts/proc_bams/run_pipeline.sh vep chunk_00
 
 # Step 3: Delete BAMs, download next chunk, repeat
 rm -rf /scratch/leduc.an/AAS_Evo/BAMS/*
@@ -545,13 +553,15 @@ Stored at `/scratch/leduc.an/tools/vep/`
 
 ## Chunk Workflow Details
 
-BAMs are processed in batches of ~500 to stay within scratch storage limits.
+BAMs are processed in batches of ~400 to stay within scratch storage limits.
 
 - `setup_chunks.sh` (in `download/gdc/`) splits the GDC manifest into persistent chunk files at `META_DIR/GDC_meta/manifests/chunks/chunk_NN.tsv`
 - Chunk manifests are valid GDC format (with header), usable directly by `submit_download.sh`
-- `run_pipeline.sh` (in `proc_bams/`) auto-generates file lists and submits SLURM array jobs for variant calling and VEP
+- `run_pipeline.sh` (in `proc_bams/`) requires a chunk name argument (e.g. `chunk_00`), auto-generates file lists, and submits SLURM array jobs with `CHUNK_NAME` exported
+- VCF and VEP outputs go into per-chunk subdirectories: `VCF/chunk_00/`, `VEP/chunk_00/`, etc.
 - Both `submit_variant_call.sh` and `submit_vep.sh` have skip-if-done logic, so re-running is safe
-- VCF/VEP outputs accumulate across chunks; `consolidate_missense.sh` and proteogenomics scripts run once after all chunks
+- `consolidate_missense.sh` scans all `VEP/chunk_*/*.vep.tsv` and writes to top-level `VEP/all_missense_mutations.tsv`
+- `generate_mutant_fastas.py` walks VEP subdirectories automatically to find all `.vep.tsv` files
 
 ## GDC Download Details
 

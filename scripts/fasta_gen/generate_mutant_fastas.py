@@ -385,10 +385,11 @@ def main():
     gene_to_protein, _ = parse_reference_fasta(args.ref_fasta)
     print(f"  Loaded {len(gene_to_protein)} gene->protein mappings")
 
-    # Find all VEP TSV files
+    # Find all VEP TSV files (walks chunk subdirectories)
     tsv_files = sorted([
-        os.path.join(args.vep_dir, f)
-        for f in os.listdir(args.vep_dir)
+        os.path.join(root, f)
+        for root, _, files in os.walk(args.vep_dir)
+        for f in files
         if f.endswith(".vep.tsv")
     ])
 

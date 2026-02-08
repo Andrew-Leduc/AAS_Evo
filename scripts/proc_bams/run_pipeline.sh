@@ -6,8 +6,11 @@
 # Run each step after the previous one completes.
 #
 # Usage:
-#   bash scripts/proc_bams/run_pipeline.sh variant-call   # Step 1: variant calling
-#   bash scripts/proc_bams/run_pipeline.sh vep             # Step 2: VEP annotation
+#   bash scripts/proc_bams/run_pipeline.sh variant-call chunk_00
+#   bash scripts/proc_bams/run_pipeline.sh vep chunk_00
+#
+# The chunk name (e.g. chunk_00) is required. VCF and VEP output will be
+# stored in per-chunk subdirectories: VCF/chunk_00/, VEP/chunk_00/.
 #
 
 set -euo pipefail
@@ -16,25 +19,30 @@ set -euo pipefail
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="/scratch/leduc.an/AAS_Evo"
 BAMS_DIR="${DATA_DIR}/BAMS"
-VCF_DIR="${DATA_DIR}/VCF"
-VEP_DIR="${DATA_DIR}/VEP"
 BAM_LIST="${DATA_DIR}/bam_list.txt"
 VCF_LIST="${DATA_DIR}/vcf_list.txt"
 # ---------------------------
 
 usage() {
-    echo "Usage: bash run_pipeline.sh <variant-call|vep>"
+    echo "Usage: bash run_pipeline.sh <variant-call|vep> <chunk_name>"
     echo ""
-    echo "  variant-call   Find all BAMs in BAMS/, submit variant calling jobs"
-    echo "  vep            Find all VCFs in VCF/, submit VEP annotation jobs"
+    echo "  variant-call chunk_00   Find all BAMs in BAMS/, submit variant calling jobs"
+    echo "  vep          chunk_00   Find all VCFs in VCF/chunk_00/, submit VEP annotation jobs"
+    echo ""
+    echo "  chunk_name is required (e.g. chunk_00, chunk_01, ...)"
     exit 1
 }
 
-if [[ $# -lt 1 ]]; then
+if [[ $# -lt 2 ]]; then
     usage
 fi
 
 ACTION="$1"
+CHUNK_NAME="$2"
+
+# Per-chunk output directories
+VCF_DIR="${DATA_DIR}/VCF/${CHUNK_NAME}"
+VEP_DIR="${DATA_DIR}/VEP/${CHUNK_NAME}"
 
 do_variant_call() {
     echo "Scanning for BAM files in ${BAMS_DIR}/ ..."
@@ -80,19 +88,20 @@ do_variant_call() {
     mkdir -p "$VCF_DIR"
     mkdir -p "${DATA_DIR}/logs"
 
-    sbatch --array=1-${NUM_BAMS}%20 "${SCRIPTS_DIR}/submit_variant_call.sh"
+    sbatch --export="ALL,CHUNK_NAME=${CHUNK_NAME}" \
+           --array=1-${NUM_BAMS}%20 "${SCRIPTS_DIR}/submit_variant_call.sh"
 
     echo ""
     echo "Monitor with: squeue -u \$USER -n var_call"
     echo ""
     echo "When complete, run:"
-    echo "  bash scripts/proc_bams/run_pipeline.sh vep"
+    echo "  bash scripts/proc_bams/run_pipeline.sh vep ${CHUNK_NAME}"
 }
 
 do_vep() {
     echo "Scanning for VCF files in ${VCF_DIR}/ ..."
 
-    ls "${VCF_DIR}"/*.vcf.gz > "$VCF_LIST" 2>/dev/null || true
+    find "${VCF_DIR}" -maxdepth 1 -name "*.vcf.gz" > "$VCF_LIST" 2>/dev/null || true
     NUM_VCFS=$(wc -l < "$VCF_LIST" | tr -d ' ')
 
     if [[ "$NUM_VCFS" -eq 0 ]]; then
@@ -134,7 +143,8 @@ do_vep() {
     mkdir -p "$VEP_DIR"
     mkdir -p "${DATA_DIR}/logs"
 
-    sbatch --array=1-${NUM_VCFS}%20 "${SCRIPTS_DIR}/submit_vep.sh"
+    sbatch --export="ALL,CHUNK_NAME=${CHUNK_NAME}" \
+           --array=1-${NUM_VCFS}%20 "${SCRIPTS_DIR}/submit_vep.sh"
 
     echo ""
     echo "Monitor with: squeue -u \$USER -n vep"

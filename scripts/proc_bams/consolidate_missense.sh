@@ -2,6 +2,9 @@
 #
 # Consolidate all missense mutation TSVs into a single table
 #
+# Scans VEP/chunk_*/ subdirectories for *.vep.tsv files. Output goes to
+# the top-level VEP/ directory.
+#
 # Usage:
 #   bash consolidate_missense.sh
 #
@@ -15,13 +18,14 @@ VEP_DIR="/scratch/leduc.an/AAS_Evo/VEP"
 OUTPUT="$VEP_DIR/all_missense_mutations.tsv"
 
 echo "[$(date)] Consolidating missense mutations..."
+echo "Scanning: ${VEP_DIR}/chunk_*/*.vep.tsv"
 
 # Write header once
 echo -e "sample_id\tCHROM\tPOS\tREF\tALT\tConsequence\tSYMBOL\tGene\tHGVSp\tAmino_acids\tProtein_position\tgnomADe_AF\tam_pathogenicity\tam_class\tDP\tAD_ref\tAD_alt\tVAF" > "$OUTPUT"
 
-# Append all TSV files (skipping headers)
+# Append all TSV files from chunk subdirectories (skipping headers)
 count=0
-for tsv in "$VEP_DIR"/*.vep.tsv; do
+for tsv in "$VEP_DIR"/chunk_*/*.vep.tsv; do
     if [[ -f "$tsv" ]]; then
         # Skip header line, append data
         tail -n +2 "$tsv" >> "$OUTPUT"

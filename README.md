@@ -15,11 +15,13 @@ AAS_Evo/
 │   │   │   ├── download_chunk.sh     # Single-chunk SLURM download job
 │   │   │   ├── download.py           # GDC download via gdc-client
 │   │   │   ├── fetch_metadata.py     # Fetch sample metadata from GDC API
+│   │   │   ├── fetch_unmatched_bams.py # Find WXS BAMs for unmatched PDC patients
 │   │   │   ├── filter_wxs_manifest.py
-│   │   │   └── setup_chunks.sh       # Split manifest into 500-BAM chunks
+│   │   │   └── setup_chunks.sh       # Split manifest into chunks
 │   │   ├── pdc/
 │   │   │   ├── submit_download.sh    # SLURM job wrapper
 │   │   │   ├── download.py           # PDC download (rate-limited)
+│   │   │   ├── refresh_urls.py       # Refresh expired PDC signed URLs via API
 │   │   │   └── consolidate_metadata.py
 │   │   └── mapping_report.py         # GDC-PDC sample matching
 │   ├── proc_bams/
@@ -55,13 +57,18 @@ AAS_Evo/
 /scratch/leduc.an/AAS_Evo/
 ├── BAMS/              # GDC BAM files (by UUID subdirectory)
 ├── RAW/               # PDC RAW files (flattened)
-├── VCF/               # Variant calls from BAM processing
-├── VEP/               # VEP annotations + missense tables
+├── VCF/               # Variant calls (per-chunk subdirectories)
+│   ├── chunk_00/      # VCFs from first BAM chunk
+│   └── chunk_01/ ...
+├── VEP/               # VEP annotations (per-chunk subdirectories)
+│   ├── chunk_00/      # VEP output from first chunk
+│   ├── chunk_01/ ...
+│   └── all_missense_mutations.tsv  # Consolidated (top-level)
 ├── SEQ_FILES/         # Reference files
 │   ├── hg38.fa        # Human reference genome (GRCh38)
 │   ├── cds.chr.bed    # CDS regions for targeted variant calling
 │   ├── uniprot_human_canonical.fasta  # UniProt reviewed proteome
-│   ├── uniref90       # MMseqs2 UniRef90 database
+│   ├── uniref50       # MMseqs2 UniRef50 database
 │   └── AlphaMissense_hg38.tsv.gz     # AlphaMissense pathogenicity data
 ├── ANALYSIS/          # Mutation filtering & ranking output
 ├── FASTA/             # Custom proteogenomics FASTAs
@@ -115,14 +122,14 @@ Downloads: hg38 genome, GENCODE CDS regions, UniProt canonical proteome, AlphaMi
 
 ### 2. Data Download (Chunked)
 
-BAMs are downloaded in chunks of ~500 to stay within storage limits:
+BAMs are downloaded in chunks of ~400 to stay within storage limits:
 
 ```bash
-# One-time: split manifest into chunks
-bash scripts/download/gdc/setup_chunks.sh
+# One-time: split manifest into chunks (400 BAMs each, tissue-only)
+bash scripts/download/gdc/setup_chunks.sh 400 path/to/manifest_wxs_bams_tissue.tsv
 
 # Per chunk (repeat for each chunk manifest):
-bash scripts/download/gdc/submit_download.sh path/to/chunk_00.tsv
+bash scripts/download/gdc/submit_download.sh path/to/chunks/chunk_00.tsv
 ```
 
 **PDC RAW files** (open access):
@@ -132,20 +139,20 @@ sbatch scripts/download/pdc/submit_download.sh
 
 ### 3. BAM Processing Pipeline
 
-Processes all BAMs currently in `BAMS/`, outputs to `VCF/` and `VEP/`:
+Processes all BAMs currently in `BAMS/`, outputs to per-chunk subdirectories (`VCF/chunk_00/`, `VEP/chunk_00/`):
 
 ```bash
-# Step 1: Variant calling (finds BAMs automatically)
-bash scripts/proc_bams/run_pipeline.sh variant-call
+# Step 1: Variant calling (finds BAMs automatically, outputs to VCF/chunk_00/)
+bash scripts/proc_bams/run_pipeline.sh variant-call chunk_00
 
-# Step 2: VEP annotation with AlphaMissense (finds VCFs automatically)
-bash scripts/proc_bams/run_pipeline.sh vep
+# Step 2: VEP annotation with AlphaMissense (reads VCF/chunk_00/, outputs to VEP/chunk_00/)
+bash scripts/proc_bams/run_pipeline.sh vep chunk_00
 
-# Step 3: Delete BAMs, download next chunk, repeat
+# Step 3: Delete BAMs, download next chunk, repeat with chunk_01, etc.
 rm -rf /scratch/leduc.an/AAS_Evo/BAMS/*
 ```
 
-VCF/VEP outputs persist across chunks. Both scripts skip already-processed samples.
+VCF/VEP outputs persist across chunks in their subdirectories. Both scripts skip already-processed samples.
 
 **Final output** (`all_missense_mutations.tsv`, 18 columns): sample_id, genomic position, consequence, gene symbol, protein change (HGVSp), amino acid swap, gnomADe_AF, AlphaMissense pathogenicity + class, read depths, VAF.
 
@@ -246,7 +253,7 @@ All reference files are downloaded and indexed by `scripts/setup/setup_seq_files
 | `cds.chr.bed` | GENCODE v46 CDS regions (merged, standard chromosomes) | ~2 MB |
 | `uniprot_human_canonical.fasta` | UniProt reference proteome UP000005640 (reviewed, canonical) | ~25 MB |
 | `AlphaMissense_hg38.tsv.gz` + `.tbi` | DeepMind AlphaMissense pathogenicity predictions | ~6 GB |
-| `uniref50` (MMseqs2 db) | UniProt Reference Clusters at 50% identity | ~24 GB |
+| `uniref50` (MMseqs2 db) | UniProt Reference Clusters at 50% identity | ~60 GB |
 | VEP container + cache | Ensembl VEP Apptainer image | ~15 GB |
 
 ## Requirements
