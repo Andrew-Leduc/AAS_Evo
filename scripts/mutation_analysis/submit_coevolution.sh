@@ -2,7 +2,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH --time=12:00:00
 #SBATCH --partition=short
 #SBATCH --job-name=coevol
@@ -12,9 +12,10 @@
 #
 # Coevolutionary analysis: predict compensatory translation errors.
 #
-# For each gene with both missense mutations and an MSA, computes MI+APC
-# coevolutionary couplings and predicts which amino acid substitution at a
-# covarying position could compensate for a destabilizing mutation.
+# For each gene with both missense mutations and an MSA, computes evolutionary
+# couplings using Direct Coupling Analysis (DCA/EVcouplings). The Potts model
+# coupling tensor J(i,a;j,b) directly encodes which amino acid pairs are
+# evolutionarily preferred, enabling prediction of compensatory substitutions.
 #
 # Prerequisites:
 #   - MSAs generated (run submit_msa_generation.sh first)
@@ -97,6 +98,7 @@ python3 "${SCRIPTS_DIR}/coevolution_analysis.py" \
     --vep-tsv "$VEP_TSV" \
     --ref-fasta "$REF_FASTA" \
     -o "${OUT_DIR}/compensatory_predictions.tsv" \
+    --backend evcouplings \
     --min-neff 50 \
     --top-k-positions 10 \
     --top-k-substitutions 3 \

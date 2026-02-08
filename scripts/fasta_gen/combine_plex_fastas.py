@@ -83,7 +83,8 @@ def load_gdc_meta(gdc_meta_path):
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             case_id = row["case_submitter_id"].strip()
-            file_id = row["file_id"].strip()
+            # Column may be "file_id" or "gdc_file_id" depending on metadata version
+            file_id = row.get("gdc_file_id", row.get("file_id", "")).strip()
             sample_type = row.get("sample_type", "").strip()
             case_to_uuids[case_id].append((file_id, sample_type))
             uuid_to_info[file_id] = {

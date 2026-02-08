@@ -21,8 +21,10 @@ Multi-omics data pipeline for CPTAC3 (Clinical Proteomic Tumor Analysis Consorti
 ### Sample Matching
 - Samples matched by `case_submitter_id` + `sample_type` (normalized to tumor/normal/blood)
 - TMT multiplexing: ~11 samples per plex, ~25 fractions per plex
-- Blood samples have genomics but no proteomics (expected)
-- Match rate: ~72% for tissue samples
+- 211 unique TMT plexes, ~1,308 unique PDC patients, ~1,057 matched to GDC
+- Blood samples (426 BAMs) have genomics but no proteomics — excluded from processing
+- Tissue-only BAMs after filtering: ~1,672
+- ~251 PDC patients unmatched; ~135 recoverable via `fetch_unmatched_bams.py`
 
 ## Directory Structure
 
@@ -39,11 +41,13 @@ AAS_Evo/                              # This repo
 │   │   │   ├── download_chunk.sh     # Single-chunk SLURM download job
 │   │   │   ├── download.py           # GDC download via gdc-client
 │   │   │   ├── fetch_metadata.py     # Fetch sample metadata from GDC API
+│   │   │   ├── fetch_unmatched_bams.py # Find WXS BAMs for unmatched PDC patients
 │   │   │   ├── filter_wxs_manifest.py # Filter manifest to WXS BAMs only
 │   │   │   └── setup_chunks.sh       # Split manifest into 500-BAM chunks
 │   │   ├── pdc/
 │   │   │   ├── download.py           # PDC download (streaming, rate-limited)
 │   │   │   ├── consolidate_metadata.py # Merge per-tissue PDC manifests
+│   │   │   ├── refresh_urls.py       # Refresh expired PDC signed URLs via API
 │   │   │   ├── submit_download.sh    # SLURM job wrapper
 │   │   │   └── download_files.sh     # Alternative bash downloader
 │   │   └── mapping_report.py         # GDC-PDC sample matching & pruning
@@ -394,7 +398,63 @@ The `download.py` script has built-in rate limiting to avoid PDC restrictions:
 - Streaming downloads to avoid memory issues
 - Auto-retry on transient errors
 
-**Important**: PDC download URLs expire after 7 days. Re-export manifests from portal if downloads fail.
+**Important**: PDC download URLs expire after 7 days. Use `refresh_urls.py` to programmatically refresh them (see below).
+
+## PDC URL Refresh Workflow
+
+PDC signed URLs are CloudFront URLs that expire after 7 days. When downloads start returning HTTP 403, refresh them via the PDC GraphQL API:
+
+```bash
+# Refresh URLs in place (backs up old file first):
+python3 scripts/download/pdc/refresh_urls.py /path/to/pdc_all_files.tsv
+
+# Or write to a new file:
+python3 scripts/download/pdc/refresh_urls.py /path/to/pdc_all_files.tsv -o refreshed.tsv
+
+# Dry run (check without writing):
+python3 scripts/download/pdc/refresh_urls.py /path/to/pdc_all_files.tsv --dry-run
+```
+
+The script queries `https://pdc.cancer.gov/graphql` using the `filesPerStudy` query with `signedUrl { url }` to get fresh URLs for each PDC study ID in the manifest. No portal login required.
+
+## Recovering Unmatched PDC Patients
+
+~251 PDC patients have proteomics but are missing from the GDC matched metadata. ~135 of these DO have WXS BAMs at GDC that were missed by the initial manifest download. To recover them:
+
+```bash
+# Step 1: Find WXS BAMs for unmatched PDC patients via GDC API
+python3 scripts/download/gdc/fetch_unmatched_bams.py \
+    --gdc-meta /path/to/GDC_meta/gdc_meta.tsv \
+    --tmt-map /path/to/PDC_meta/pdc_file_tmt_map.tsv \
+    -o /path/to/GDC_meta/gdc_meta_unmatched.tsv
+
+# Step 2: Append to existing metadata
+tail -n +2 /path/to/GDC_meta/gdc_meta_unmatched.tsv >> /path/to/GDC_meta/gdc_meta.tsv
+
+# Step 3: Re-run sample matching
+python3 scripts/download/mapping_report.py
+
+# Step 4: Filter out blood samples and re-chunk
+cd /path/to/GDC_meta
+head -1 gdc_meta_matched.tsv > gdc_meta_matched_tissue.tsv
+awk -F'\t' '$9 != "Blood Derived Normal"' gdc_meta_matched.tsv | tail -n +2 >> gdc_meta_matched_tissue.tsv
+
+# Step 5: Rebuild chunk manifests from tissue-only metadata
+bash scripts/download/gdc/setup_chunks.sh
+```
+
+This adds ~135 patients (~272 BAMs, ~180 after excluding blood), bringing coverage from ~1,057 to ~1,192 patients (~89% of PDC patients). The remaining ~116 PDC patients genuinely have no WXS data at GDC.
+
+## Blood Sample Exclusion
+
+Blood Derived Normal samples (426 of 2,098 BAMs, ~20%) have no proteomics match and are not used as germline references in the current single-sample bcftools pipeline. They should be excluded before chunking:
+
+```bash
+head -1 gdc_meta_matched.tsv > gdc_meta_matched_tissue.tsv
+awk -F'\t' '$9 != "Blood Derived Normal"' gdc_meta_matched.tsv | tail -n +2 >> gdc_meta_matched_tissue.tsv
+```
+
+This reduces processing from ~2,098 to ~1,672 BAMs. Already-processed blood BAM VEP files cause no harm (they just won't link to any TMT plex).
 
 ## Tissue Types in Dataset
 

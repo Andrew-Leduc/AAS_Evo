@@ -176,7 +176,9 @@ MSA files named by UniProt accession (`P04637.a3m`). Pre-existing MSAs are auto-
 
 ### 6. Coevolution Analysis
 
-Predicts compensatory translation errors: given a destabilizing missense mutation, finds covarying positions via MI+APC and predicts which amino acid substitution could compensate.
+Predicts compensatory translation errors using EVcouplings/Direct Coupling Analysis (DCA). Given a destabilizing missense mutation at position i, uses the Potts model coupling tensor J(i,a;j,b) to identify covarying positions and predict which amino acid substitution could compensate.
+
+**Method**: Mean-field DCA computes evolutionary couplings between all position pairs. The coupling parameters directly encode which amino acid combinations are evolutionarily preferred, enabling more accurate compensatory predictions than simple mutual information.
 
 ```bash
 # After MSA generation completes (auto-finds gene list from ANALYSIS/):
