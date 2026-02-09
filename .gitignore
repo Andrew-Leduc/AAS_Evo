@@ -8,8 +8,11 @@ RAW/
 *.mzML
 *.mzXML
 
-# Manifests with sensitive info
-manifests/
+# GDC access token (controlled data, 30-day expiry — never commit)
+metadata/GDC_meta/.gdc-user-token.txt
+
+# Generated chunk manifests (regenerable via setup_chunks.sh)
+metadata/GDC_meta/manifests/chunks/
 
 # Python
 __pycache__/

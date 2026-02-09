@@ -27,7 +27,7 @@ set -euo pipefail
 
 # --------- PATHS ----------
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
-META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo_meta"
+META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo/metadata"
 DATA_DIR="/scratch/leduc.an/AAS_Evo"
 
 RAW_DIR="${DATA_DIR}/RAW"

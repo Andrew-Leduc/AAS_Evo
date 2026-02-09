@@ -1,0 +1,316 @@
+﻿Run Metadata ID,Number of Fractions,Protocol,tmt_126,tmt_127n,tmt_127c,tmt_128n,tmt_128c,tmt_129n,tmt_129c,tmt_130n,tmt_130c,tmt_131,tmt_131c
+"01CPTAC_PDA_Proteome_JHU_20191125","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","QC1
+Cell Lines","C3N-03884
+Primary Tumor","C3L-00589
+Solid Tissue Normal
+Disqualified","C3L-03123
+Solid Tissue Normal","C3L-01687
+Solid Tissue Normal
+Disqualified","C3L-03123
+Primary Tumor","C3L-01687
+Primary Tumor","C3L-00589
+Primary Tumor","C3N-03884
+Solid Tissue Normal","C3L-00599
+Primary Tumor"
+"02CPTAC_PDA_Proteome_JHU_20191022","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-01054
+Primary Tumor","C3L-02890
+Solid Tissue Normal
+Disqualified","C3N-01379
+Primary Tumor","C3L-03630
+Solid Tissue Normal","C3L-03356
+Primary Tumor","C3L-03630
+Primary Tumor","C3L-02890
+Primary Tumor","C3L-03356
+Solid Tissue Normal","C3L-01054
+Solid Tissue Normal","C3N-01166
+Primary Tumor"
+"03CPTAC_PDA_Proteome_JHU_20191111","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3N-04126
+Primary Tumor","C3N-04283
+Solid Tissue Normal
+Disqualified","C3L-04495
+Solid Tissue Normal","C3N-03853
+Solid Tissue Normal
+Disqualified","C3L-02610
+Primary Tumor","C3N-03853
+Primary Tumor","C3N-03000
+Primary Tumor","C3L-02610
+Solid Tissue Normal","C3N-04283
+Primary Tumor","C3L-04495
+Primary Tumor"
+"04CPTAC_PDA_Proteome_JHU_20200221","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-03388
+Solid Tissue Normal","C3L-01689
+Primary Tumor","C3N-02768
+Primary Tumor","C3N-03430
+Primary Tumor","C3L-03371
+Primary Tumor","C3L-03371
+Solid Tissue Normal","C3N-01388
+Primary Tumor","C3L-03388
+Primary Tumor","C3N-02768
+Solid Tissue Normal","C3L-01689
+Solid Tissue Normal
+Disqualified"
+"05CPTAC_PDA_Proteome_JHU_20200210","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-01971
+Primary Tumor","C3N-01900
+Primary Tumor","C3L-03628
+Primary Tumor","QC2
+Cell Lines","C3N-01998
+Primary Tumor","C3N-01900
+Not Reported","C3L-03628
+Solid Tissue Normal
+Disqualified","C3N-01998
+Solid Tissue Normal","KoreanReference1
+Tumor","C3L-01971
+Solid Tissue Normal"
+"06CPTAC_PDA_Proteome_JHU_20200214","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-01637
+Primary Tumor","C3N-00249
+Solid Tissue Normal","C3N-00198
+Primary Tumor","C3L-03394
+Primary Tumor","C3N-01907
+Primary Tumor","C3N-02971
+Primary Tumor","C3N-00249
+Primary Tumor","C3N-00198
+Solid Tissue Normal
+Disqualified","C3L-03394
+Solid Tissue Normal
+Disqualified","C3L-01637
+Solid Tissue Normal"
+"07CPTAC_PDA_Proteome_JHU_20200224","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3N-03173
+Solid Tissue Normal
+Disqualified","C3N-03754
+Primary Tumor","C3L-01598
+Solid Tissue Normal","C3L-02809
+Solid Tissue Normal","C3L-01453
+Primary Tumor","C3L-02809
+Primary Tumor","C3L-02109
+Primary Tumor","C3L-01598
+Primary Tumor","C3N-03173
+Primary Tumor","C3L-01453
+Solid Tissue Normal
+Disqualified"
+"08CPTAC_PDA_Proteome_JHU_20200228","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-02606
+Solid Tissue Normal","C3N-03666
+Primary Tumor","C3N-01997
+Solid Tissue Normal","C3N-02589
+Solid Tissue Normal","C3L-04479
+Solid Tissue Normal","C3L-04479
+Primary Tumor","C3N-01168
+Primary Tumor","C3L-02606
+Primary Tumor","C3N-01997
+Primary Tumor","C3N-02589
+Primary Tumor"
+"09CPTAC_PDA_Proteome_JHU_20191204","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-02463
+Primary Tumor","C3L-03743
+Primary Tumor","C3L-01051
+Primary Tumor","QC3
+Cell Lines","C3N-03211
+Primary Tumor","C3L-03743
+Solid Tissue Normal
+Disqualified","C3L-01051
+Solid Tissue Normal","C3N-02940
+Primary Tumor","C3N-03211
+Solid Tissue Normal","C3L-02463
+Solid Tissue Normal
+Disqualified"
+"10CPTAC_PDA_Proteome_JHU_20191207","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-02115
+Solid Tissue Normal
+Disqualified","C3N-00436
+Primary Tumor","C3N-01716
+Primary Tumor","C3L-04475
+Primary Tumor","C3L-04473
+Solid Tissue Normal","C3N-00436
+Solid Tissue Normal","C3N-00516
+Primary Tumor","C3L-02115
+Primary Tumor","C3L-04475
+Solid Tissue Normal
+Disqualified","C3L-04473
+Primary Tumor"
+"11CPTAC_PDA_Proteome_JHU_20191211","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-03129
+Primary Tumor","C3L-04848
+Primary Tumor","C3L-00881
+Primary Tumor","C3L-00277
+Primary Tumor","C3N-00513
+Solid Tissue Normal","C3L-00277
+Solid Tissue Normal","C3L-00881
+Solid Tissue Normal","C3N-00513
+Primary Tumor","C3L-04848
+Solid Tissue Normal","C3N-02579
+Primary Tumor"
+"12CPTAC_PDA_Proteome_JHU_20191215","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-01037
+Solid Tissue Normal","C3L-03395
+Primary Tumor","C3N-03780
+Primary Tumor","C3L-01036
+Solid Tissue Normal","C3L-02897
+Primary Tumor","C3L-03395
+Solid Tissue Normal","C3L-01036
+Primary Tumor","C3N-03439
+Primary Tumor","C3N-03780
+Solid Tissue Normal","C3L-01037
+Primary Tumor"
+"13CPTAC_PDA_Proteome_JHU_20191219","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","KoreanReference2
+Tumor","C3N-00957
+Solid Tissue Normal","C3L-00819
+Primary Tumor","C3N-04282
+Primary Tumor","C3N-03086
+Primary Tumor","C3N-00957
+Primary Tumor","QC4
+Cell Lines","C3N-04282
+Solid Tissue Normal","C3L-00819
+Solid Tissue Normal","C3N-03428
+Primary Tumor"
+"14CPTAC_PDA_Proteome_JHU_20191227","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-03635
+Primary Tumor","C3L-00625
+Primary Tumor","C3L-00189
+Primary Tumor","C3N-03061
+Primary Tumor","C3N-03440
+Primary Tumor","C3L-01662
+Primary Tumor","C3N-03440
+Solid Tissue Normal","C3N-00303
+Primary Tumor","C3N-03061
+Solid Tissue Normal","C3L-00189
+Solid Tissue Normal"
+"15CPTAC_PDA_Proteome_JHU_20191230","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-01703
+Primary Tumor","C3L-03632
+Primary Tumor","C3N-01383
+Primary Tumor","C3N-02010
+Primary Tumor","C3L-01124
+Primary Tumor","C3N-01382
+Primary Tumor","C3L-01124
+Solid Tissue Normal","C3N-00302
+Primary Tumor","C3L-03632
+Solid Tissue Normal","C3N-02010
+Solid Tissue Normal"
+"16CPTAC_PDA_Proteome_JHU_20200103","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-00102
+Primary Tumor","C3L-04080
+Primary Tumor","C3N-00518
+Primary Tumor","C3L-02116
+Primary Tumor","C3N-03665
+Primary Tumor","C3L-04072
+Solid Tissue Normal","C3L-04072
+Primary Tumor","C3N-00518
+Solid Tissue Normal","C3L-00102
+Solid Tissue Normal","C3N-02998
+Primary Tumor"
+"17CPTAC_PDA_Proteome_JHU_20200110","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3N-03840
+Primary Tumor","KoreanReference3
+Tumor","C3L-00928
+Solid Tissue Normal","C3N-00517
+Primary Tumor","C3L-02112
+Primary Tumor","C3L-00598
+Primary Tumor","C3N-03840
+Solid Tissue Normal","C3L-00928
+Primary Tumor","QC5
+Cell Lines","C3N-00517
+Solid Tissue Normal"
+"18CPTAC_PDA_Proteome_JHU_20200114","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3N-02585
+Solid Tissue Normal","C3N-03426
+Primary Tumor","C3N-01714
+Primary Tumor","C3N-03039
+Primary Tumor","C3N-01165
+Primary Tumor","C3N-01502
+Primary Tumor","C3N-03426
+Solid Tissue Normal","C3N-01380
+Primary Tumor","C3L-02604
+Primary Tumor","C3N-02585
+Primary Tumor"
+"19CPTAC_PDA_Proteome_JHU_20200117","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3N-02944
+Solid Tissue Normal","C3N-04119
+Primary Tumor","C3N-02592
+Solid Tissue Normal","C3L-04853
+Primary Tumor","C3N-03007
+Primary Tumor","C3N-04284
+Primary Tumor","C3N-02592
+Primary Tumor","C3N-02944
+Primary Tumor","C3N-04119
+Solid Tissue Normal","C3L-04853
+Solid Tissue Normal"
+"20CPTAC_PDA_Proteome_JHU_20200121","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-03639
+Solid Tissue Normal","C3L-00640
+Primary Tumor","C3N-01719
+Primary Tumor","C3L-03639
+Primary Tumor","C3N-00514
+Solid Tissue Normal","C3L-00017
+Primary Tumor","C3N-03670
+Primary Tumor","C3L-01328
+Primary Tumor","C3N-00514
+Primary Tumor","C3L-00640
+Solid Tissue Normal"
+"21CPTAC_PDA_Proteome_JHU_20200124","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3N-02295
+Primary Tumor","C3N-02573
+Primary Tumor","C3L-01052
+Primary Tumor","C3L-00622
+Primary Tumor","C3N-00709
+Primary Tumor","C3L-01052
+Solid Tissue Normal","C3L-04027
+Primary Tumor","C3N-02573
+Solid Tissue Normal","C3N-02295
+Solid Tissue Normal","C3N-00709
+Solid Tissue Normal"
+"22CPTAC_PDA_Proteome_JHU_20200128","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-02701
+Primary Tumor","C3L-01031
+Solid Tissue Normal","C3L-01053
+Primary Tumor","C3N-03190
+Primary Tumor","C3N-01715
+Primary Tumor","C3L-01031
+Primary Tumor","QC6
+Cell Lines","C3N-01012
+Primary Tumor","C3L-01053
+Solid Tissue Normal","C3N-01167
+Primary Tumor"
+"23CPTAC_PDA_Proteome_JHU_20200203","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-00401
+Solid Tissue Normal","C3N-01011
+Primary Tumor","C3N-03839
+Primary Tumor","C3N-01375
+Primary Tumor","C3N-01381
+Primary Tumor","C3L-00401
+Primary Tumor","C3N-03839
+Solid Tissue Normal","C3L-03350
+Not Reported","C3N-01011
+Solid Tissue Normal","C3L-02118
+Primary Tumor"
+"24CPTAC_PDA_Proteome_JHU_20200206","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3N-00511
+Primary Tumor","C3L-02613
+Primary Tumor","C3N-03069
+Solid Tissue Normal","C3N-00512
+Primary Tumor","C3L-02899
+Primary Tumor","pooled sample
+Not Reported","C3N-03006
+Primary Tumor","C3N-00512
+Solid Tissue Normal","C3N-03069
+Primary Tumor","C3L-02899
+Solid Tissue Normal"
+"25CPTAC_PDA_Proteome_JHU_20200521","25","CPTAC-PDA-Proteome-JHU-TMT11","pooled sample
+Not Reported","C3L-03513
+Solid Tissue Normal","WU-PDA1
+Tumor","C3L-03514
+Solid Tissue Normal","C3L-03515
+Solid Tissue Normal","WU-pooled sample
+Tumor","C3L-07032
+Solid Tissue Normal","C3L-07033
+Solid Tissue Normal","C3L-07034
+Solid Tissue Normal","C3L-07035
+Solid Tissue Normal","C3L-07036
+Solid Tissue Normal"

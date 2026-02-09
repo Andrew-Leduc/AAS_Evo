@@ -27,7 +27,7 @@ module load python/3.8.1 2>/dev/null || true
 
 # Project paths
 SCRIPTS_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo"
-META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo_meta"
+META_DIR="${SCRIPTS_DIR}/metadata"
 DATA_DIR="/scratch/leduc.an/AAS_Evo"
 
 # Default arguments

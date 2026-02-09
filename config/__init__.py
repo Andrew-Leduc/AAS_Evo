@@ -1,5 +1,6 @@
 from .paths import (
     ENV,
+    REPO_DIR,
     SCRIPTS_DIR,
     DATA_DIR,
     META_DIR,

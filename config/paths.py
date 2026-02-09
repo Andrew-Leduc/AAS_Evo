@@ -21,20 +21,23 @@ def get_environment():
 ENV = get_environment()
 
 # Base paths
+REPO_DIR = Path(__file__).resolve().parent.parent
+
 if ENV == 'cluster':
     # Cluster paths
     SCRIPTS_DIR = Path('/home/leduc.an/AAS_Evo_project/AAS_Evo')
     DATA_DIR = Path('/scratch/leduc.an/AAS_Evo')
-    META_DIR = Path('/home/leduc.an/AAS_Evo_project/AAS_Evo_meta')
     BAMS_DIR = DATA_DIR / 'BAMS'
     RAW_DIR = DATA_DIR / 'RAW'
 else:
     # Local development paths
-    SCRIPTS_DIR = Path(__file__).parent.parent
+    SCRIPTS_DIR = REPO_DIR
     DATA_DIR = SCRIPTS_DIR / 'data'
-    META_DIR = Path('/Users/andrewleduc/Desktop/AAS_Evo_meta')
     BAMS_DIR = DATA_DIR / 'BAMS'
     RAW_DIR = DATA_DIR / 'RAW'
+
+# Metadata lives inside the repo (same path on all environments)
+META_DIR = REPO_DIR / 'metadata'
 
 # Derived paths
 DOWNLOAD_DIR = SCRIPTS_DIR / 'scripts' / 'download'

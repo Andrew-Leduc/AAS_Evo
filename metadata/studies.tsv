@@ -1,0 +1,13 @@
+tissue_folder	pdc_study_id	gdc_project_id	study_name
+CCRCC	PDC000127	CPTAC-3	CPTAC CCRCC Discovery Study - Proteome
+GMB_conf	PDC000446	CPTAC-3	CPTAC GBM Confirmatory Study - Proteome
+GMG_disco	PDC000204	CPTAC-3	CPTAC GBM Discovery Study - Proteome
+HNSCC	PDC000221	CPTAC-3	CPTAC HNSCC Discovery Study - Proteome
+LSCC	PDC000234	CPTAC-3	CPTAC LSCC Discovery Study - Proteome
+LUAD	PDC000153	CPTAC-3	CPTAC LUAD Discovery Study - Proteome
+LUAD_disco	PDC000489	CPTAC-3	CPTAC LUAD Confirmatory Study - Proteome
+PDA	PDC000270	CPTAC-3	CPTAC PDA Discovery Study - Proteome
+PDAC_enrich	PDC000393	CPTAC-3	Sampling techniques for enrichment of PDAC - Proteome
+UCEC	PDC000125	CPTAC-3	CPTAC UCEC Discovery Study - Proteome
+UCEC_disco	PDC000439	CPTAC-3	CPTAC UCEC Confirmatory Study - Proteome
+non-ccRCC	PDC000464	CPTAC-3	CPTAC non-ccRCC Study - Proteome

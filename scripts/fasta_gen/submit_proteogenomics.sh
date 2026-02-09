@@ -32,7 +32,7 @@ SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [[ -n "${SLURM_SUBMIT_DIR:-}" && ! -f "${SCRIPTS_DIR}/generate_mutant_fastas.py" ]]; then
     SCRIPTS_DIR="${SLURM_SUBMIT_DIR}/scripts/fasta_gen"
 fi
-META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo_meta"
+META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo/metadata"
 DATA_DIR="/scratch/leduc.an/AAS_Evo"
 
 REF_FASTA="${DATA_DIR}/SEQ_FILES/uniprot_human_canonical.fasta"

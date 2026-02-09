@@ -8,47 +8,58 @@ Multi-omics data pipeline for CPTAC3 (Clinical Proteomic Tumor Analysis Consorti
 AAS_Evo/
 ├── config/
 │   └── paths.py                      # Environment-aware path config
+├── metadata/                            # Tracked metadata (in-repo)
+│   ├── studies.tsv                      # Study registry (tissue → PDC study ID)
+│   ├── GDC_meta/                        # GDC manifests & sample metadata
+│   │   └── manifests/manifest_wxs_bams.tsv
+│   ├── PDC_meta/                        # PDC per-tissue CSVs & consolidated files
+│   │   ├── {tissue}/PDC_file_manifest.csv
+│   │   ├── {tissue}/PDC_study_biospecimen.csv
+│   │   └── {tissue}/PDC_study_experimental.csv
+│   └── mapping_report.tsv              # GDC↔PDC matching report
 ├── scripts/
+│   ├── setup/
+│   │   ├── setup_metadata.sh            # Orchestrator: fetch all metadata from APIs
+│   │   ├── setup_seq_files.sh           # Download all external reference files
+│   │   ├── fetch_gdc_manifest.py        # Query GDC REST API for WXS BAM manifest
+│   │   └── fetch_pdc_metadata.py        # Query PDC GraphQL API for per-tissue metadata
 │   ├── download/
 │   │   ├── gdc/
-│   │   │   ├── submit_download.sh    # Split manifest & submit SLURM jobs
-│   │   │   ├── download_chunk.sh     # Single-chunk SLURM download job
-│   │   │   ├── download.py           # GDC download via gdc-client
-│   │   │   ├── fetch_metadata.py     # Fetch sample metadata from GDC API
-│   │   │   ├── fetch_unmatched_bams.py # Find WXS BAMs for unmatched PDC patients
-│   │   │   ├── filter_wxs_manifest.py
-│   │   │   └── setup_chunks.sh       # Split manifest into chunks
+│   │   │   ├── submit_download.sh       # Submit SLURM download jobs
+│   │   │   ├── download_chunk.sh        # Single-chunk SLURM download job
+│   │   │   ├── download.py              # GDC download via gdc-client
+│   │   │   ├── fetch_metadata.py        # Fetch sample metadata from GDC API
+│   │   │   ├── fetch_unmatched_bams.py  # Find WXS BAMs for unmatched PDC patients
+│   │   │   └── setup_chunks.sh          # Split manifest into chunks
 │   │   ├── pdc/
-│   │   │   ├── submit_download.sh    # SLURM job wrapper
-│   │   │   ├── download.py           # PDC download (rate-limited)
-│   │   │   ├── refresh_urls.py       # Refresh expired PDC signed URLs via API
-│   │   │   └── consolidate_metadata.py
-│   │   └── mapping_report.py         # GDC-PDC sample matching
+│   │   │   ├── submit_download.sh       # SLURM job wrapper
+│   │   │   ├── download.py              # PDC download (rate-limited)
+│   │   │   ├── refresh_urls.py          # Refresh expired PDC signed URLs via API
+│   │   │   └── consolidate_metadata.py  # Merge per-tissue CSVs
+│   │   └── mapping_report.py            # GDC-PDC sample matching
 │   ├── proc_bams/
-│   │   ├── run_pipeline.sh           # Wrapper: auto-generates file lists + submits jobs
-│   │   ├── submit_variant_call.sh    # SLURM array: variant calling + mapping QC
-│   │   ├── submit_vep.sh             # SLURM array: VEP annotation + AlphaMissense
-│   │   └── consolidate_missense.sh   # Merge missense mutations
-│   ├── mutation_analysis/            # Filtering, MSA generation & coevolution
-│   │   ├── filter_and_rank.py        # Rank mutations by composite pathogenicity score
-│   │   ├── generate_msas.py          # MSA generation via MMseqs2
-│   │   ├── submit_msa_generation.sh  # SLURM array: one gene per task
-│   │   ├── coevolution_analysis.py   # MI+APC covariation & compensatory prediction
-│   │   └── submit_coevolution.sh     # SLURM wrapper for coevolution analysis
-│   ├── fasta_gen/                    # Custom proteogenomics FASTAs
-│   │   ├── generate_mutant_fastas.py # Per-sample mutant FASTAs from VEP
-│   │   ├── combine_plex_fastas.py    # Combine by TMT plex (ref + mut + comp)
-│   │   ├── generate_compensatory_fastas.py # Compensatory mutation FASTAs
-│   │   ├── submit_compensatory_fastas.sh   # SLURM wrapper
-│   │   └── submit_proteogenomics.sh  # SLURM wrapper for FASTA generation
-│   ├── ms_search/                    # FragPipe MS database search
-│   │   ├── generate_manifests.py     # Per-plex FragPipe manifests + TMT annotations
-│   │   ├── submit_fragpipe.sh        # SLURM array: one plex per task
-│   │   └── run_ms_search.sh          # Orchestrator: generate manifests + submit
-│   └── setup/
-│       └── setup_seq_files.sh        # Download all external reference files
+│   │   ├── run_pipeline.sh              # Wrapper: auto-generates file lists + submits jobs
+│   │   ├── submit_variant_call.sh       # SLURM array: variant calling
+│   │   ├── submit_vep.sh               # SLURM array: VEP annotation + AlphaMissense
+│   │   └── consolidate_missense.sh      # Merge missense mutations
+│   ├── mutation_analysis/               # Filtering, MSA generation & coevolution
+│   │   ├── filter_and_rank.py
+│   │   ├── generate_msas.py
+│   │   ├── submit_msa_generation.sh
+│   │   ├── coevolution_analysis.py
+│   │   └── submit_coevolution.sh
+│   ├── fasta_gen/                       # Custom proteogenomics FASTAs
+│   │   ├── generate_mutant_fastas.py
+│   │   ├── combine_plex_fastas.py
+│   │   ├── generate_compensatory_fastas.py
+│   │   ├── submit_compensatory_fastas.sh
+│   │   └── submit_proteogenomics.sh
+│   └── ms_search/                       # FragPipe MS database search
+│       ├── generate_manifests.py
+│       ├── submit_fragpipe.sh
+│       └── run_ms_search.sh
 └── .claude/
-    └── CLAUDE.md                     # Detailed project context
+    └── CLAUDE.md                        # Detailed project context
 ```
 
 ## Cluster Data Layout
@@ -105,6 +116,26 @@ Compensatory FASTAs ────────────────────
 ```
 
 ## Workflows
+
+### 0. Metadata Setup (One-Time)
+
+Fetches all metadata from GDC and PDC APIs programmatically. No manual portal downloads needed.
+
+```bash
+bash scripts/setup/setup_metadata.sh
+```
+
+This runs six steps automatically:
+1. **GDC manifest** — queries GDC REST API for all CPTAC WXS BAM files (projects from `studies.tsv`)
+2. **GDC metadata** — enriches manifest with case/sample info
+3. **PDC metadata** — queries PDC GraphQL API for file manifests, biospecimen data, and TMT plex layouts (all 12 tissues)
+4. **Consolidate** — merges per-tissue PDC CSVs into unified files
+5. **Matching** — cross-references GDC↔PDC samples, generates pruned manifests
+6. **Recover unmatched** — finds WXS BAMs for PDC patients missing from the initial GDC manifest, merges them in, and re-runs matching
+
+To add a new tissue/study, add a row to `metadata/studies.tsv` and re-run.
+
+**GDC token**: BAM downloads require dbGaP authorization. Download your token from the [GDC portal](https://portal.gdc.cancer.gov) (username → Download Token) and pass the file path to `submit_download.sh`. The token is NOT needed for this metadata setup step.
 
 ### 1. Reference File Setup (One-Time)
 

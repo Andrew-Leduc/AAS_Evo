@@ -18,7 +18,7 @@
 
 set -e
 
-META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo_meta"
+META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo/metadata"
 RAW_DIR="${1:-/scratch/leduc.an/AAS_Evo/RAW}"
 MANIFEST="${2:-${META_DIR}/PDC_meta/pdc_all_files.tsv}"
 

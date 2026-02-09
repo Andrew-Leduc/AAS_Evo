@@ -14,7 +14,7 @@
 set -e
 
 # Default paths (adjust for your environment)
-DEFAULT_MANIFEST="${HOME}/AAS_Evo_project/AAS_Evo_meta/PDC_meta/pdc_all_files.tsv"
+DEFAULT_MANIFEST="${HOME}/AAS_Evo_project/AAS_Evo/metadata/PDC_meta/pdc_all_files.tsv"
 DEFAULT_OUTPUT="/scratch/leduc.an/AAS_Evo/RAW"
 
 MANIFEST="${1:-$DEFAULT_MANIFEST}"
