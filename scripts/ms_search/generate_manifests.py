@@ -140,13 +140,18 @@ def patch_workflow(template_path, fasta_path, out_path):
     with open(template_path) as f:
         content = f.read()
 
-    # Replace database path
-    content = re.sub(
+    # Replace or add database path
+    new_line = f"database.db-path={fasta_path}"
+    new_content = re.sub(
         r"^database\.db-path=.*$",
-        f"database.db-path={fasta_path}",
+        new_line,
         content,
         flags=re.MULTILINE,
     )
+    if new_content == content:
+        # Key didn't exist in template — append it
+        new_content = content.rstrip("\n") + f"\n{new_line}\n"
+    content = new_content
 
     with open(out_path, "w") as f:
         f.write(content)
