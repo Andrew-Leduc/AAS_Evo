@@ -34,6 +34,8 @@ FASTA_DIR="${DATA_DIR}/FASTA/per_plex"
 
 # FragPipe installation paths — adjust these to your installation
 FRAGPIPE_BIN="${FRAGPIPE_BIN:-/home/leduc.an/bin/fragpipe-24.0/bin/fragpipe}"
+MSFRAGGER_JAR="${MSFRAGGER_JAR:-/home/leduc.an/bin/fragpipe-24.0/tools/MSFragger-4.4.1.jar}"
+PHILOSOPHER_BIN="${PHILOSOPHER_BIN:-/home/leduc.an/bin/fragpipe-24.0/tools/Philosopher/philosopher-v5.1.3-RC9}"
 # --------------------------
 
 mkdir -p "${DATA_DIR}/logs"
@@ -106,6 +108,8 @@ fi
     --workdir "$OUTDIR" \
     --threads "${SLURM_CPUS_PER_TASK}" \
     --ram "$((SLURM_MEM_PER_NODE / 1024))" \
+    --config-msfragger "$MSFRAGGER_JAR" \
+    --config-philosopher "$PHILOSOPHER_BIN" \
     2>&1
 
 echo ""
