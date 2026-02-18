@@ -239,6 +239,11 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
     sample_id = os.path.basename(tsv_path).replace(".vep.tsv", "")
     out_path = os.path.join(out_dir, f"{sample_id}_mutant.fasta")
 
+    if os.path.exists(out_path):
+        return {"applied": 0, "peptides": 0, "skipped_gene": 0, "skipped_mismatch": 0,
+                "skipped_length_mismatch": 0, "skipped_vaf": 0, "skipped_gnomad": 0,
+                "skipped_parse": 0, "skipped_dup": 0}, [], sample_id
+
     entries = []
 
     with open(tsv_path, newline="") as f:
@@ -346,12 +351,14 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
 
             counts["applied"] += 1
 
-    # Write FASTA (only if there are entries)
+    # Write FASTA atomically via temp file to avoid partial writes on job kill
     if entries:
-        with open(out_path, "w") as out:
+        tmp_path = out_path + ".tmp"
+        with open(tmp_path, "w") as out:
             for header, seq in entries:
                 out.write(header + "\n")
                 out.write(seq + "\n")
+        os.rename(tmp_path, out_path)
 
     return counts, log_entries, sample_id
 
@@ -423,6 +430,7 @@ def main():
                             f"{counts['skipped_length_mismatch']}\t{counts['skipped_vaf']}\t"
                             f"{counts['skipped_gnomad']}\t{counts['skipped_parse']}\t"
                             f"{counts['skipped_dup']}\n")
+            summary_f.flush()
 
             for key in totals:
                 totals[key] += counts[key]

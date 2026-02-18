@@ -28,7 +28,7 @@ MANIFEST="${1:-$DEFAULT_MANIFEST}"
 TOKEN="${2:-$DEFAULT_TOKEN}"
 NUM_CHUNKS="${3:-$DEFAULT_CHUNKS}"
 
-CHUNK_DIR="${META_DIR}/GDC_meta/manifests/manifest_chunks"
+CHUNK_DIR="${META_DIR}/GDC_meta/manifests/sub_chunks"
 
 # Validate inputs
 if [[ ! -f "$MANIFEST" ]]; then
@@ -57,16 +57,17 @@ echo ""
 # Save the header line
 HEADER=$(head -1 "$MANIFEST")
 
-# Create chunk directory
+# Clean and create chunk directory
+rm -rf "$CHUNK_DIR"
 mkdir -p "$CHUNK_DIR"
 mkdir -p "${DATA_DIR}/logs"
 
 # Split manifest into chunks (skip header, then re-add it to each chunk)
-tail -n +2 "$MANIFEST" | split -l "$LINES_PER_CHUNK" -d -a 2 - "${CHUNK_DIR}/chunk_"
+tail -n +2 "$MANIFEST" | split -l "$LINES_PER_CHUNK" -d -a 2 - "${CHUNK_DIR}/sub_"
 
 # Submit each chunk as a separate job
 SUBMITTED=0
-for chunk in "${CHUNK_DIR}"/chunk_*; do
+for chunk in "${CHUNK_DIR}"/sub_*; do
     # Prepend header to make it a valid manifest
     CHUNK_MANIFEST="${chunk}.tsv"
     { echo "$HEADER"; cat "$chunk"; } > "$CHUNK_MANIFEST"

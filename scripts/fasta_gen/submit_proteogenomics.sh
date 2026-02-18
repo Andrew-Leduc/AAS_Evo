@@ -3,7 +3,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
-#SBATCH --time=1:00:00
+#SBATCH --time=8:00:00
 #SBATCH --partition=short
 #SBATCH --job-name=protgen
 #SBATCH --output=/scratch/leduc.an/AAS_Evo/logs/proteogenomics_%j.out

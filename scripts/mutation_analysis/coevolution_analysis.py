@@ -578,6 +578,66 @@ class EVcouplingsBackend(CouplingBackend):
 
 
 # ---------------------------------------------------------------------------
+# Site connectivity
+# ---------------------------------------------------------------------------
+
+def compute_site_connectivity(msa_col_i, scores, msa_to_protein,
+                              seq_distance_threshold=10,
+                              score_percentile=90):
+    """
+    Quantify how connected a mutation site is in the coevolution network.
+
+    Counts the number of positions with coupling scores in the top percentile,
+    split by sequence distance (short-range vs long-range).
+
+    Args:
+        msa_col_i: MSA column index for the mutation site
+        scores: (L, L) coupling score matrix
+        msa_to_protein: dict mapping MSA columns to 1-based protein positions
+        seq_distance_threshold: residues; < threshold = short-range
+        score_percentile: percentile of positive scores defining "strong"
+
+    Returns dict with connectivity metrics.
+    """
+    L = scores.shape[0]
+
+    site_scores = scores[msa_col_i].copy()
+    site_scores[msa_col_i] = -np.inf
+
+    # Threshold from distribution of all positive pairwise scores
+    all_scores = scores[np.triu_indices(L, k=1)]
+    positive = all_scores[all_scores > 0]
+    if len(positive) == 0:
+        return {"site_n_covary": 0, "n_covary_short": 0, "n_covary_long": 0,
+                "mean_coupling_short": 0.0, "mean_coupling_long": 0.0}
+
+    threshold = np.percentile(positive, score_percentile)
+    prot_pos_i = msa_to_protein.get(msa_col_i)
+
+    short_scores = []
+    long_scores = []
+
+    for col_j in range(L):
+        if col_j == msa_col_i or site_scores[col_j] <= threshold:
+            continue
+        prot_pos_j = msa_to_protein.get(col_j)
+        if prot_pos_j is None or prot_pos_i is None:
+            continue
+        if abs(prot_pos_j - prot_pos_i) < seq_distance_threshold:
+            short_scores.append(site_scores[col_j])
+        else:
+            long_scores.append(site_scores[col_j])
+
+    return {
+        "site_n_covary": len(short_scores) + len(long_scores),
+        "n_covary_short": len(short_scores),
+        "n_covary_long": len(long_scores),
+        "mean_coupling_short": float(np.mean(short_scores)) if short_scores else 0.0,
+        "mean_coupling_long": float(np.mean(long_scores)) if long_scores else 0.0,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Position mapping
 # ---------------------------------------------------------------------------
 
@@ -1077,6 +1137,11 @@ def main():
 
             msa_col = prot_to_msa[prot_pos]
 
+            # Site connectivity metrics
+            connectivity = compute_site_connectivity(
+                msa_col, scores, msa_to_prot,
+            )
+
             # Get J tensor if available (from EVcouplings backend)
             J_tensor = params.get("J", None)
 
@@ -1102,6 +1167,11 @@ def main():
                     "coupling_score": f"{pred['coupling_score']:.6f}",
                     "conditional_score": f"{pred['conditional_score']:.4f}",
                     "preference_shift": f"{pred['preference_shift']:.4f}",
+                    "site_n_covary": connectivity["site_n_covary"],
+                    "n_covary_short": connectivity["n_covary_short"],
+                    "n_covary_long": connectivity["n_covary_long"],
+                    "mean_coupling_short": f"{connectivity['mean_coupling_short']:.6f}",
+                    "mean_coupling_long": f"{connectivity['mean_coupling_long']:.6f}",
                     "neff": f"{neff:.1f}",
                     "msa_depth": n_seqs,
                 })
@@ -1126,6 +1196,8 @@ def main():
         "gene", "uniprot_accession", "mutation", "mutation_hgvsp", "n_samples",
         "covarying_pos", "wildtype_aa", "predicted_compensatory_aa",
         "coupling_score", "conditional_score", "preference_shift",
+        "site_n_covary", "n_covary_short", "n_covary_long",
+        "mean_coupling_short", "mean_coupling_long",
         "neff", "msa_depth",
     ]
     with open(args.output, "w", newline="") as f:
