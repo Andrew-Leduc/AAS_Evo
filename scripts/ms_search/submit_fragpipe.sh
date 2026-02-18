@@ -103,7 +103,7 @@ fi
     --headless \
     --workflow "$WORKFLOW" \
     --manifest "$MANIFEST" \
-    --output "$OUTDIR" \
+    --workdir "$OUTDIR" \
     --threads "${SLURM_CPUS_PER_TASK}" \
     --ram "$((SLURM_MEM_PER_NODE / 1024))" \
     2>&1
