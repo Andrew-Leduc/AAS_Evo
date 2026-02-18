@@ -33,7 +33,7 @@ PLEX_LIST="${SEARCH_DIR}/plex_list.txt"
 FASTA_DIR="${DATA_DIR}/FASTA/per_plex"
 
 # FragPipe installation paths — adjust these to your installation
-FRAGPIPE_BIN="${FRAGPIPE_BIN:-/scratch/leduc.an/tools/fragpipe/bin/fragpipe}"
+FRAGPIPE_BIN="${FRAGPIPE_BIN:-/home/leduc.an/bin/fragpipe-24.0/bin/fragpipe}"
 # --------------------------
 
 mkdir -p "${DATA_DIR}/logs"
