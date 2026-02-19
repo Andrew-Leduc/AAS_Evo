@@ -302,12 +302,16 @@ def main():
                             continue
                         seen_peptides.add(pep_key)
 
-                        # Build header with patient info
-                        # Format: >mut|accession|gene|swap|genetic|patient|sample_type
-                        # Normalize sample_type: FASTA headers treat spaces as
-                        # description delimiters, which breaks Philosopher lookup.
+                        # Build header with Philosopher-compatible 3-field format.
+                        # Philosopher's database --annotate indexes proteins by the
+                        # second |-field as accession. Using >mut|Q02952|AKAP12|...
+                        # (7 fields) causes the accession to collide with the real
+                        # sp|Q02952|AKAP12_HUMAN entry, breaking filter lookup.
+                        # Fix: encode mutation into the accession field so it is
+                        # unique and uses exactly 3 |-separated fields.
+                        # Format: >mut|mut.{accession}.{swap}|{gene}_{swap}_mut
                         st = gdc_sample_type.replace(" ", "_")
-                        new_header = f">mut|{accession}|{gene}|{swap}|genetic|{case_id}|{st}"
+                        new_header = f">mut|mut.{accession}.{swap}|{gene}_{swap}_{case_id}_{st}_mut"
                         plex_mutants.append((new_header, seq))
 
             # Filter compensatory entries to those whose original mutation
@@ -348,10 +352,10 @@ def main():
                         continue
                     seen_comp_peptides.add(comp_pep_key)
 
-                    # Build header with patient info
-                    # Format: >comp|accession|gene|swaps|predicted|patient|sample_type
+                    # Same 3-field format for compensatory entries.
+                    # Format: >comp|comp.{accession}.{swap_combo}|{gene}_{swap_combo}_comp
                     st = sample_type.replace(" ", "_")
-                    new_header = f">comp|{accession}|{gene}|{swap_combo}|predicted|{case_id}|{st}"
+                    new_header = f">comp|comp.{accession}.{swap_combo}|{gene}_{swap_combo}_{case_id}_{st}_comp"
                     plex_comp_entries.append((new_header, seq))
 
             # Write plex FASTA: reference + mutants + compensatory
