@@ -42,9 +42,19 @@ def add_decoys(path, prefix, force=False):
     if not force and has_decoys(path, prefix):
         return False
 
-    with open(path) as f_in, open(path, "a") as f_out:
+    # Record file size before appending — reading and appending the same file
+    # simultaneously would cause f_in to read newly written decoy lines,
+    # creating an infinite loop.
+    original_size = os.path.getsize(path)
+
+    with open(path, "r") as f_in, open(path, "a") as f_out:
         header, seq_parts = None, []
-        for line in f_in:
+        while True:
+            if f_in.tell() >= original_size:
+                break
+            line = f_in.readline()
+            if not line:
+                break
             line = line.rstrip()
             if line.startswith(">"):
                 if header is not None:
