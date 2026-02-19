@@ -22,24 +22,6 @@ import os
 import sys
 
 
-def parse_fasta(path):
-    """Read a FASTA file. Returns list of (header, sequence) tuples."""
-    entries = []
-    header, seq = None, []
-    with open(path) as f:
-        for line in f:
-            line = line.rstrip()
-            if line.startswith(">"):
-                if header is not None:
-                    entries.append((header, "".join(seq)))
-                header, seq = line, []
-            else:
-                seq.append(line)
-    if header is not None:
-        entries.append((header, "".join(seq)))
-    return entries
-
-
 def has_decoys(path, prefix):
     """Return True if the file already contains decoy entries."""
     decoy_header = f">{prefix}"
@@ -54,17 +36,26 @@ def add_decoys(path, prefix, force=False):
     """
     Append reversed decoy entries to a FASTA file in place.
 
+    Streams entries one at a time to avoid loading the full file into memory.
     Returns True if decoys were added, False if skipped.
     """
     if not force and has_decoys(path, prefix):
         return False
 
-    entries = parse_fasta(path)
-
-    with open(path, "a") as f:
-        for header, seq in entries:
-            decoy_header = f">{prefix}{header[1:]}"
-            f.write(f"{decoy_header}\n{seq[::-1]}\n")
+    with open(path) as f_in, open(path, "a") as f_out:
+        header, seq_parts = None, []
+        for line in f_in:
+            line = line.rstrip()
+            if line.startswith(">"):
+                if header is not None:
+                    seq = "".join(seq_parts)
+                    f_out.write(f">{prefix}{header[1:]}\n{seq[::-1]}\n")
+                header, seq_parts = line, []
+            else:
+                seq_parts.append(line)
+        if header is not None:
+            seq = "".join(seq_parts)
+            f_out.write(f">{prefix}{header[1:]}\n{seq[::-1]}\n")
 
     return True
 
