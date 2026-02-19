@@ -4,7 +4,8 @@
 #
 # Steps:
 #   1. Generate per-plex manifests from TMT mapping
-#   2. Submit SLURM array job to run FragPipe per plex
+#   2. Add reversed decoy sequences to per-plex FASTAs (required for FDR)
+#   3. Submit SLURM array job to run FragPipe per plex
 #
 # Prerequisites:
 #   - RAW files downloaded and flattened (bash scripts/download/pdc/flatten_raw.sh)
@@ -81,6 +82,11 @@ python3 "${SCRIPTS_DIR}/generate_manifests.py" \
 
 echo ""
 
+# Step 2: Add decoys to per-plex FASTAs
+echo "[$(date)] Adding decoys to per-plex FASTAs..."
+python3 "${SCRIPTS_DIR}/add_decoys.py" --fasta-dir "$FASTA_DIR"
+echo ""
+
 # Check plex list
 PLEX_LIST="${SEARCH_DIR}/plex_list.txt"
 if [[ ! -f "$PLEX_LIST" ]]; then
@@ -111,7 +117,7 @@ if [[ -z "$WORKFLOW_TEMPLATE" && ! -f "${SEARCH_DIR}/fragpipe.workflow" ]]; then
     exit 0
 fi
 
-# Step 2: Submit SLURM array job
+# Step 3: Submit SLURM array job
 echo "[$(date)] Submitting FragPipe jobs..."
 echo "  Plexes to search: $NUM_PLEXES"
 echo "  Concurrent jobs:  5"
