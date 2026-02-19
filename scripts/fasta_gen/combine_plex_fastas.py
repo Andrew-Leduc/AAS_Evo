@@ -304,7 +304,10 @@ def main():
 
                         # Build header with patient info
                         # Format: >mut|accession|gene|swap|genetic|patient|sample_type
-                        new_header = f">mut|{accession}|{gene}|{swap}|genetic|{case_id}|{gdc_sample_type}"
+                        # Normalize sample_type: FASTA headers treat spaces as
+                        # description delimiters, which breaks Philosopher lookup.
+                        st = gdc_sample_type.replace(" ", "_")
+                        new_header = f">mut|{accession}|{gene}|{swap}|genetic|{case_id}|{st}"
                         plex_mutants.append((new_header, seq))
 
             # Filter compensatory entries to those whose original mutation
@@ -347,7 +350,8 @@ def main():
 
                     # Build header with patient info
                     # Format: >comp|accession|gene|swaps|predicted|patient|sample_type
-                    new_header = f">comp|{accession}|{gene}|{swap_combo}|predicted|{case_id}|{sample_type}"
+                    st = sample_type.replace(" ", "_")
+                    new_header = f">comp|{accession}|{gene}|{swap_combo}|predicted|{case_id}|{st}"
                     plex_comp_entries.append((new_header, seq))
 
             # Write plex FASTA: reference + mutants + compensatory
