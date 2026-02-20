@@ -209,6 +209,18 @@ def main():
     ref_entries = load_mutant_fasta(args.ref_fasta)
     print(f"  {len(ref_entries)} reference proteins")
 
+    # Build accession -> full sequence map for substring filtering.
+    # A mutant tryptic peptide that appears verbatim in the reference protein
+    # will be matched by MSFragger to BOTH the mutant and reference entries
+    # (regardless of tryptic rules), creating a shared peptide that causes
+    # Philosopher's filter to crash with "protein not in database" errors.
+    ref_seq_map = {}
+    for ref_hdr, ref_seq in ref_entries:
+        parts = ref_hdr.split("|")
+        if len(parts) >= 2:
+            ref_seq_map[parts[1]] = ref_seq
+    print(f"  {len(ref_seq_map)} reference sequences indexed for substring filtering")
+
     # Load compensatory entries if provided
     comp_entries = []
     if args.compensatory_fasta and os.path.isfile(args.compensatory_fasta):
@@ -255,6 +267,8 @@ def main():
 
         total_plexes = 0
         total_comp_entries = 0
+        total_ref_substr_filtered = 0
+        total_comp_ref_substr_filtered = 0
 
         for plex_id in sorted(plex_to_cases.keys()):
             case_sample_pairs = plex_to_cases[plex_id]
@@ -267,6 +281,7 @@ def main():
             mutation_to_samples = defaultdict(list)
             cases_with_gdc = 0
             samples_with_fasta = 0
+            plex_ref_substr_filtered = 0
             unique_cases = set(cp[0] for cp in case_sample_pairs)
 
             for case_id, pdc_sample_type in case_sample_pairs:
@@ -302,21 +317,31 @@ def main():
                             continue
                         seen_peptides.add(pep_key)
 
+                        # Skip if the peptide sequence appears verbatim in the
+                        # reference protein. MSFragger matches by sequence, not
+                        # header, so a shared substring would be assigned to the
+                        # reference entry and Philosopher filter would fail when
+                        # looking up the mutant accession in db.bin.
+                        if seq in ref_seq_map.get(accession, ""):
+                            plex_ref_substr_filtered += 1
+                            continue
+
                         # Philosopher only indexes sp| and tr| prefixed entries.
                         # Custom prefixes (mut|, comp|) are skipped during
                         # database --annotate, causing filter lookup failures.
-                        # Fix: use sp| prefix with a MUT. accession that cannot
-                        # collide with real UniProt accessions (dots are invalid
-                        # in UniProt IDs).
-                        # Format: >sp|MUT.{accession}.{swap}|{gene}_{swap}_mut
+                        # Fix: use sp| prefix. Accession must be alphanumeric +
+                        # underscore only — dots cause Philosopher to misparse
+                        # the accession field and fail its database lookup.
+                        # Format: >sp|MUT_{accession}_{swap}|{gene}_{swap}_mut
                         st = gdc_sample_type.replace(" ", "_")
-                        new_header = f">sp|MUT.{accession}.{swap}|{gene}_{swap}_{case_id}_{st}_mut"
+                        new_header = f">sp|MUT_{accession}_{swap}|{gene}_{swap}_{case_id}_{st}_mut"
                         plex_mutants.append((new_header, seq))
 
             # Filter compensatory entries to those whose original mutation
             # is present in this plex, and add patient info
             plex_comp_entries = []
             seen_comp_peptides = set()
+            plex_comp_ref_substr_filtered = 0
 
             if comp_entries:
                 for header, seq in comp_entries:
@@ -351,10 +376,16 @@ def main():
                         continue
                     seen_comp_peptides.add(comp_pep_key)
 
+                    # Skip compensatory peptides that are substrings of the
+                    # reference protein (same shared-peptide problem as above).
+                    if seq in ref_seq_map.get(accession, ""):
+                        plex_comp_ref_substr_filtered += 1
+                        continue
+
                     # Same sp| fix for compensatory entries.
-                    # Format: >sp|COMP.{accession}.{swap_combo}|{gene}_{swap_combo}_comp
+                    # Format: >sp|COMP_{accession}_{swap_combo}|{gene}_{swap_combo}_comp
                     st = sample_type.replace(" ", "_")
-                    new_header = f">sp|COMP.{accession}.{swap_combo}|{gene}_{swap_combo}_{case_id}_{st}_comp"
+                    new_header = f">sp|COMP_{accession}_{swap_combo}|{gene}_{swap_combo}_{case_id}_{st}_comp"
                     plex_comp_entries.append((new_header, seq))
 
             # Write plex FASTA: reference + mutants + compensatory
@@ -369,13 +400,17 @@ def main():
 
             total_plexes += 1
             total_comp_entries += len(plex_comp_entries)
+            total_ref_substr_filtered += plex_ref_substr_filtered
+            total_comp_ref_substr_filtered += plex_comp_ref_substr_filtered
 
     print(f"\n{'='*50}")
     print(f"Plex FASTA Generation Summary")
     print(f"{'='*50}")
-    print(f"Plexes generated:       {total_plexes}")
-    print(f"Reference proteins:     {len(ref_entries)}")
-    print(f"Compensatory peptides:  {total_comp_entries} (across all plexes)")
+    print(f"Plexes generated:            {total_plexes}")
+    print(f"Reference proteins:          {len(ref_entries)}")
+    print(f"Compensatory peptides:       {total_comp_entries} (across all plexes)")
+    print(f"Ref-substring filtered (mut):{total_ref_substr_filtered} mutant peptides dropped")
+    print(f"Ref-substring filtered (comp):{total_comp_ref_substr_filtered} comp peptides dropped")
     print(f"Summary: {summary_path}")
     print(f"Output:  {args.output}")
 
