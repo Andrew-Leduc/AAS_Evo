@@ -135,6 +135,31 @@ def find_tryptic_cleavage_sites(sequence):
     return sites
 
 
+def get_reference_peptides(sequence, max_missed_cleavages=1):
+    """
+    Get all tryptic peptides from a reference protein sequence.
+
+    Used to filter mutant entries that would generate peptides identical
+    to reference peptides (e.g. when a K/R cleavage site is mutated,
+    the missed-cleavage peptide logic can still emit the pre-mutation
+    fragment under certain conditions).
+
+    Returns a set of peptide sequences.
+    """
+    sites = find_tryptic_cleavage_sites(sequence)
+    peptides = set()
+    for i in range(len(sites) - 1):
+        for missed in range(max_missed_cleavages + 1):
+            if i + missed + 1 >= len(sites):
+                break
+            start = sites[i]
+            end = sites[i + missed + 1]
+            pep = sequence[start:end]
+            if 6 <= len(pep) <= 50:
+                peptides.add(pep)
+    return peptides
+
+
 def extract_tryptic_peptides(sequence, mutation_pos, max_missed_cleavages=1):
     """
     Extract tryptic peptide(s) containing a mutation position.
@@ -214,13 +239,21 @@ def parse_mutation(hgvsp, amino_acids, protein_position):
     return None
 
 
-def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
+def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af,
+                   ref_pep_cache=None):
     """
     Process one VEP TSV file and generate a mutant tryptic peptide FASTA.
+
+    ref_pep_cache: shared dict mapping accession -> set of reference tryptic
+        peptide sequences. Lazily populated; pass the same dict across all
+        samples to avoid redundant computation.
 
     Returns dict with counts: applied, skipped_gene, skipped_mismatch,
         skipped_vaf, skipped_gnomad, skipped_parse, skipped_dup
     """
+    if ref_pep_cache is None:
+        ref_pep_cache = {}
+
     counts = {
         "applied": 0,
         "peptides": 0,
@@ -231,6 +264,7 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
         "skipped_gnomad": 0,
         "skipped_parse": 0,
         "skipped_dup": 0,
+        "skipped_ref_peptide": 0,
     }
     log_entries = []  # (status, gene, detail)
     seen_mutations = set()  # (gene, ref, pos, alt) to deduplicate
@@ -242,7 +276,8 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
     if os.path.exists(out_path):
         return {"applied": 0, "peptides": 0, "skipped_gene": 0, "skipped_mismatch": 0,
                 "skipped_length_mismatch": 0, "skipped_vaf": 0, "skipped_gnomad": 0,
-                "skipped_parse": 0, "skipped_dup": 0}, [], sample_id
+                "skipped_parse": 0, "skipped_dup": 0,
+                "skipped_ref_peptide": 0}, [], sample_id
 
     entries = []
 
@@ -301,6 +336,10 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
             accession, entry_name, ref_seq = gene_to_protein[symbol]
             uniprot_length = len(ref_seq)
 
+            # Cache reference tryptic peptides for this protein (lazy)
+            if accession not in ref_pep_cache:
+                ref_pep_cache[accession] = get_reference_peptides(ref_seq)
+
             # Validate protein length matches (VEP uses Ensembl, we use UniProt)
             # Allow small differences (±5 AA) for signal peptide/initiator Met variations
             if vep_length is not None and abs(vep_length - uniprot_length) > 5:
@@ -338,7 +377,17 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af):
             # Build header: >mut|P04637|TP53|R273H|genetic
             swap = f"{ref_aa}{pos}{alt_aa}"
 
+            ref_peptides = ref_pep_cache[accession]
             for peptide in peptides:
+                # Skip peptides identical to any reference tryptic peptide.
+                # This can happen when a mutation removes a K/R cleavage site:
+                # the missed-cleavage extraction may still emit a pre-mutation
+                # fragment that is unchanged from the reference sequence.
+                # Such peptides cannot distinguish mutant from reference in MS.
+                if peptide in ref_peptides:
+                    counts["skipped_ref_peptide"] += 1
+                    continue
+
                 # Deduplicate peptides across mutations
                 pep_key = (accession, swap, peptide)
                 if pep_key in seen_peptides:
@@ -411,25 +460,30 @@ def main():
     totals = {
         "applied": 0, "peptides": 0, "skipped_gene": 0, "skipped_mismatch": 0,
         "skipped_length_mismatch": 0, "skipped_vaf": 0, "skipped_gnomad": 0,
-        "skipped_parse": 0, "skipped_dup": 0,
+        "skipped_parse": 0, "skipped_dup": 0, "skipped_ref_peptide": 0,
     }
+
+    # Shared cache of reference tryptic peptides per protein accession.
+    # Avoids recomputing the same protein's digest for every sample.
+    ref_pep_cache = {}
 
     with open(summary_path, "w") as summary_f:
         summary_f.write("sample_id\tmutations_applied\tpeptides_written\tskipped_gene\t"
                         "skipped_mismatch\tskipped_length_mismatch\tskipped_vaf\t"
-                        "skipped_gnomad\tskipped_parse\tskipped_dup\n")
+                        "skipped_gnomad\tskipped_parse\tskipped_dup\tskipped_ref_peptide\n")
 
         for tsv in tsv_files:
             counts, log_entries, sample_id = process_sample(
                 tsv, gene_to_protein, args.output,
-                args.min_vaf, args.max_gnomad_af
+                args.min_vaf, args.max_gnomad_af,
+                ref_pep_cache=ref_pep_cache,
             )
 
             summary_f.write(f"{sample_id}\t{counts['applied']}\t{counts['peptides']}\t"
                             f"{counts['skipped_gene']}\t{counts['skipped_mismatch']}\t"
                             f"{counts['skipped_length_mismatch']}\t{counts['skipped_vaf']}\t"
                             f"{counts['skipped_gnomad']}\t{counts['skipped_parse']}\t"
-                            f"{counts['skipped_dup']}\n")
+                            f"{counts['skipped_dup']}\t{counts['skipped_ref_peptide']}\n")
             summary_f.flush()
 
             for key in totals:
@@ -460,6 +514,7 @@ def main():
     print(f"Skipped (gnomAD):     {totals['skipped_gnomad']}")
     print(f"Skipped (parse):      {totals['skipped_parse']}")
     print(f"Skipped (dup):        {totals['skipped_dup']}")
+    print(f"Skipped (ref peptide):{totals['skipped_ref_peptide']}")
     print(f"Summary: {summary_path}")
     print(f"Output:  {args.output}")
 
