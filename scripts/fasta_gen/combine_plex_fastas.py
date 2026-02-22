@@ -8,14 +8,23 @@ MS search databases. Each plex FASTA contains:
   - Deduplicated mutant peptides from all samples in that plex (with patient info)
   - Compensatory peptides (for mutations observed in that plex, with patient info)
 
-Header format for mutant peptides:
-    >mut|{accession}|{gene}|{swap}|genetic|{patient}|{sample_type}
+Header format for mutant peptides (Philosopher-compatible mock-UniProt):
+    >sp|{accession}-{swap}-{hash}|{gene}-mut {gene} mutant {swap} OS=Homo sapiens OX=9606 GN={gene} PE=1 SV=1
 
 Example:
-    >mut|P04637|TP53|R273H|genetic|C3L-00001|tumor
+    >sp|P04637-R273H-A3F2|TP53-mut TP53 mutant R273H OS=Homo sapiens OX=9606 GN=TP53 PE=1 SV=1
 
 Header format for compensatory peptides:
-    >comp|{accession}|{gene}|{orig_swap}_{comp_swap}|predicted|{patient}|{sample_type}
+    >sp|{accession}-comp-{orig_swap}-{comp_swap}-{hash}|{gene}-comp {gene} compensatory {orig_swap}_{comp_swap} OS=Homo sapiens OX=9606 GN={gene} PE=1 SV=1
+
+Why this format:
+    Philosopher classifies FASTA entries by accession format. Entries with non-UniProt
+    accessions (e.g. MUT_Q02952_K117E) are classified as "generic" proteins and skipped
+    during "philosopher database --annotate", so they never appear in db.bin. When the
+    filter step tries to annotate PSMs assigned to these proteins it crashes.
+    Using the real UniProt accession as the base (Q02952-K117E-HASH) causes Philosopher
+    to classify it as a UniProt variant, store it in db.bin, and handle it correctly.
+    GN= is required by TMT-Integrator for gene-level intensity reports.
 
 Linking chain:
     TMT plex (run_metadata_id in pdc_file_tmt_map.tsv)
@@ -34,6 +43,7 @@ Usage:
 
 import argparse
 import csv
+import hashlib
 import os
 import sys
 from collections import defaultdict
@@ -326,15 +336,30 @@ def main():
                             plex_ref_substr_filtered += 1
                             continue
 
-                        # Philosopher only indexes sp| and tr| prefixed entries.
-                        # Custom prefixes (mut|, comp|) are skipped during
-                        # database --annotate, causing filter lookup failures.
-                        # Fix: use sp| prefix. Accession must be alphanumeric +
-                        # underscore only — dots cause Philosopher to misparse
-                        # the accession field and fail its database lookup.
-                        # Format: >sp|MUT_{accession}_{swap}|{gene}_{swap}_mut
-                        st = gdc_sample_type.replace(" ", "_")
-                        new_header = f">sp|MUT_{accession}_{swap}|{gene}_{swap}_{case_id}_{st}_mut"
+                        # Philosopher header format (confirmed by developer in
+                        # FragPipe issue #1862): must use real UniProt accession
+                        # as base with a dash-delimited variant suffix so
+                        # Philosopher classifies it as UniProt type and stores
+                        # it in db.bin. Accessions with MUT_ prefix were
+                        # classified as "generic" and skipped during --annotate.
+                        #
+                        # Format required by Philosopher + TMT-Integrator:
+                        #   >sp|{accession}-{swap}-{hash}|{gene}-mut
+                        #   {gene} mutant {swap} OS=Homo sapiens OX=9606
+                        #   GN={gene} PE=1 SV=1
+                        #
+                        # - Real accession as base keeps Philosopher happy
+                        # - 4-char seq hash disambiguates multiple peptides
+                        #   for the same mutation (different missed cleavages)
+                        # - GN= field is required by TMT-Integrator for
+                        #   gene-level intensity reports (TMT-Integrator #15)
+                        seq_hash = hashlib.sha1(seq.encode()).hexdigest()[:4].upper()
+                        acc_field = f"{accession}-{swap}-{seq_hash}"
+                        new_header = (
+                            f">sp|{acc_field}|{gene}-mut "
+                            f"{gene} mutant {swap} "
+                            f"OS=Homo sapiens OX=9606 GN={gene} PE=1 SV=1"
+                        )
                         plex_mutants.append((new_header, seq))
 
             # Filter compensatory entries to those whose original mutation
@@ -382,10 +407,17 @@ def main():
                         plex_comp_ref_substr_filtered += 1
                         continue
 
-                    # Same sp| fix for compensatory entries.
-                    # Format: >sp|COMP_{accession}_{swap_combo}|{gene}_{swap_combo}_comp
-                    st = sample_type.replace(" ", "_")
-                    new_header = f">sp|COMP_{accession}_{swap_combo}|{gene}_{swap_combo}_{case_id}_{st}_comp"
+                    # Same Philosopher-compatible format for compensatory entries.
+                    # swap_combo underscores replaced with dashes in accession
+                    # field (underscores in accession break Philosopher parsing).
+                    comp_swap_acc = swap_combo.replace("_", "-")
+                    seq_hash = hashlib.sha1(seq.encode()).hexdigest()[:4].upper()
+                    acc_field = f"{accession}-comp-{comp_swap_acc}-{seq_hash}"
+                    new_header = (
+                        f">sp|{acc_field}|{gene}-comp "
+                        f"{gene} compensatory {swap_combo} "
+                        f"OS=Homo sapiens OX=9606 GN={gene} PE=1 SV=1"
+                    )
                     plex_comp_entries.append((new_header, seq))
 
             # Write plex FASTA: reference + mutants + compensatory
