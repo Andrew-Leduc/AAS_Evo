@@ -36,7 +36,7 @@ PLEX_LIST="${SEARCH_DIR}/plex_list.txt"
 
 # MaxQuant — adjust path to wherever you unzipped it
 MAXQUANT_DIR="${MAXQUANT_DIR:-/home/leduc.an/bin/MaxQuant}"
-MAXQUANT_EXE="${MAXQUANT_DIR}/bin/MaxQuantCmd.exe"
+MAXQUANT_EXE="${MAXQUANT_DIR}/bin/MaxQuantCmd.dll"
 
 # .NET 8 — installed locally by run_maxquant.sh (no module available on Discovery)
 DOTNET_ROOT="${DOTNET_ROOT:-/home/leduc.an/bin/dotnet}"
@@ -64,7 +64,7 @@ if [[ ! -f "$MQPAR" ]]; then
 fi
 
 if [[ ! -f "$MAXQUANT_EXE" ]]; then
-    echo "ERROR: MaxQuantCmd.exe not found: $MAXQUANT_EXE"
+    echo "ERROR: MaxQuantCmd.dll not found: $MAXQUANT_EXE"
     echo "  Set MAXQUANT_DIR or edit this script"
     exit 1
 fi

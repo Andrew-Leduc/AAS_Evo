@@ -39,14 +39,14 @@ echo "========================================="
 echo ""
 
 # ── Step 1: Unzip MaxQuant if needed ─────────────────────────────────────────
-if [[ ! -f "${MAXQUANT_INSTALL}/bin/MaxQuantCmd.exe" ]]; then
+if [[ ! -f "${MAXQUANT_INSTALL}/bin/MaxQuantCmd.dll" ]]; then
     if [[ -z "$MQ_ZIP" ]]; then
         # Try to find a zip automatically in ~/bin/
         MQ_ZIP=$(ls ~/bin/MaxQuant*.zip 2>/dev/null | head -1 || true)
     fi
 
     if [[ -z "$MQ_ZIP" || ! -f "$MQ_ZIP" ]]; then
-        echo "ERROR: MaxQuantCmd.exe not found at ${MAXQUANT_INSTALL}"
+        echo "ERROR: MaxQuantCmd.dll not found at ${MAXQUANT_INSTALL}"
         echo "  Either:"
         echo "    a) Provide the zip: bash $0 /path/to/MaxQuant_X.Y.Z.zip"
         echo "    b) Set MAXQUANT_DIR to where it's already unzipped"
@@ -59,7 +59,7 @@ if [[ ! -f "${MAXQUANT_INSTALL}/bin/MaxQuantCmd.exe" ]]; then
 
     # MaxQuant zips usually have a top-level folder inside — flatten if needed
     inner=$(ls "$MAXQUANT_INSTALL" | head -1)
-    if [[ -f "${MAXQUANT_INSTALL}/${inner}/bin/MaxQuantCmd.exe" ]]; then
+    if [[ -f "${MAXQUANT_INSTALL}/${inner}/bin/MaxQuantCmd.dll" ]]; then
         mv "${MAXQUANT_INSTALL}/${inner}"/* "$MAXQUANT_INSTALL/"
         rmdir "${MAXQUANT_INSTALL}/${inner}" 2>/dev/null || true
     fi
