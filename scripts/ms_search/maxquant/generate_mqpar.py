@@ -30,7 +30,7 @@ from xml.dom import minidom
 
 
 TMT_CHANNEL_MAP = {
-    "tmt_126":  "126",
+    "tmt_126":  "126C",
     "tmt_127n": "127N",
     "tmt_127c": "127C",
     "tmt_128n": "128N",
@@ -43,19 +43,22 @@ TMT_CHANNEL_MAP = {
     "tmt_131c": "131C",
 }
 
-# TMT11plex reporter ion masses (monoisotopic, Da)
+# MaxQuant internal modification names for TMT11plex.
+# Channels 126–131N use "TMT10plex" prefix (same reagent as TMT10);
+# only 131C is unique to TMT11plex.
+# Tuple: (internalLabel for Lys, terminalLabel for N-term, channel_key)
 TMT11_CHANNELS = [
-    ("TMT11-126",  126.127726),
-    ("TMT11-127N", 127.124761),
-    ("TMT11-127C", 127.131081),
-    ("TMT11-128N", 128.128116),
-    ("TMT11-128C", 128.134436),
-    ("TMT11-129N", 129.131471),
-    ("TMT11-129C", 129.137791),
-    ("TMT11-130N", 130.134826),
-    ("TMT11-130C", 130.141146),
-    ("TMT11-131N", 131.138181),
-    ("TMT11-131C", 131.144501),
+    ("TMT10plex-Lys126C",  "TMT10plex-Nter126C",  "126C"),
+    ("TMT10plex-Lys127N",  "TMT10plex-Nter127N",  "127N"),
+    ("TMT10plex-Lys127C",  "TMT10plex-Nter127C",  "127C"),
+    ("TMT10plex-Lys128N",  "TMT10plex-Nter128N",  "128N"),
+    ("TMT10plex-Lys128C",  "TMT10plex-Nter128C",  "128C"),
+    ("TMT10plex-Lys129N",  "TMT10plex-Nter129N",  "129N"),
+    ("TMT10plex-Lys129C",  "TMT10plex-Nter129C",  "129C"),
+    ("TMT10plex-Lys130N",  "TMT10plex-Nter130N",  "130N"),
+    ("TMT10plex-Lys130C",  "TMT10plex-Nter130C",  "130C"),
+    ("TMT10plex-Lys131N",  "TMT10plex-Nter131N",  "131N"),
+    ("TMT11plex-Lys131C",  "TMT11plex-Nter131C",  "131C"),
 ]
 
 
@@ -98,146 +101,178 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     """
     Build and return a MaxQuant mqpar.xml ElementTree for one plex.
 
+    Structure validated against a working TMT11 GUI-generated mqpar (v2.4.7).
     Key choices:
-      - minPeptidesProtein = 1  → single-peptide proteins reported (our mutants)
+      - minPeptides = 1         → single-peptide proteins reported (our mutants)
       - decoyMode = revert      → MaxQuant generates reversed decoys internally
-      - TMT11plex fixed mods    → correct TMT quantification
-      - reporterPIF = 0.75      → precursor ion fraction filter (recommended)
+      - isobaricLabels          → TMT11 channels using MaxQuant internal mod names
+      - writeSdrf = False       → disable SDRF writer (crashes when channels empty)
     """
-    root = ET.Element("MaxQuantParams")
+    root = ET.Element("MaxQuantParams",
+                      attrib={
+                          "xmlns:xsd": "http://www.w3.org/2001/XMLSchema",
+                          "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+                      })
 
     # ── FASTA ─────────────────────────────────────────────────────────────────
     fastas = sub(root, "fastaFiles")
     fi = sub(fastas, "FastaFileInfo")
     sub(fi, "fastaFilePath",         fasta_path)
-    # Standard UniProt parse rule — works for sp|ACC|ENTRY and sp|ACC-swap-hash|ENTRY-mut
-    sub(fi, "identifierParseRule",   r">.*\|(.+)\|.*")
+    sub(fi, "identifierParseRule",   r">([^\s]*)")
     sub(fi, "descriptionParseRule",  r">(.*)")
     sub(fi, "taxonomyParseRule",     "")
     sub(fi, "variationParseRule",    "")
     sub(fi, "modificationParseRule", "")
     sub(fi, "taxonomyId",            "")
 
+    sub(root, "fastaFilesProteogenomics")
     sub(root, "fastaFilesFirstSearch")
+    sub(root, "fixedSearchFolder",   "")
 
-    # ── RAW FILES ─────────────────────────────────────────────────────────────
-    fp_el = sub(root, "filePaths")
-    exp_el = sub(root, "experiments")
-    frac_el = sub(root, "fractions")
-    ptm_el = sub(root, "ptms")
-    pg_el = sub(root, "paramGroupIndices")
-
-    for raw in sorted(raw_files):
-        sub(fp_el, "string", raw)
-        sub(exp_el, "string", plex_id)
-        sub(frac_el, "short", 32767)    # 32767 = no fractionation
-        sub(ptm_el, "boolean", "False")
-        sub(pg_el, "int", 0)
-
-    sub(root, "referenceChannel", "")
-
-    # ── GLOBAL SETTINGS ───────────────────────────────────────────────────────
-    sub(root, "numThreads",            n_threads)
-    sub(root, "emailAddress",          "")
-    sub(root, "smtpHost",              "")
-    sub(root, "emailFromAddress",      "")
-    sub(root, "fixedCombinedFolder",   out_dir)
-    sub(root, "fullMinMz",             -1.79769313486232e+308)
-    sub(root, "fullMaxMz",              1.79769313486232e+308)
-    sub(root, "sendEmail",             "False")
-    sub(root, "ionCountIntensities",   "False")
-    sub(root, "verboseColumnOutput",   "True")
-    sub(root, "writeMsScansTable",     "False")
-    sub(root, "writeMsmsScansTable",   "True")
-    sub(root, "writeMs3ScansTable",    "False")
-    sub(root, "writeMsmsTable",        "True")
-    sub(root, "writeModificationPositionTable", "False")
-    sub(root, "writeUnresolvedMsmsTable",       "False")
-    sub(root, "ibaq",                  "True")
-    sub(root, "ibaqLogFit",            "False")
-    sub(root, "separateLfq",          "False")
+    # ── GLOBAL SETTINGS (matching reference mqpar field order) ────────────────
+    sub(root, "andromedaCacheSize",  350000)
+    sub(root, "advancedRatios",      "True")
+    sub(root, "pvalThres",           0.005)
+    sub(root, "rtShift",             "False")
+    sub(root, "separateLfq",         "False")
     sub(root, "lfqStabilizeLargeRatios", "True")
-    sub(root, "lfqRequireMsms",        "True")
-    sub(root, "decoyMode",             "revert")
-    sub(root, "includeContaminants",   "True")
-    sub(root, "maxPeptideMass",        4600.0)
-    sub(root, "epsilonMutationScore",  "True")   # boolean toggle, not a float
+    sub(root, "lfqRequireMsms",      "True")
+    sub(root, "lfqBayesQuant",       "False")
+    sub(root, "decoyMode",           "revert")
+    sub(root, "includeContaminants", "True")
+    sub(root, "maxPeptideMass",      4600)
+    sub(root, "epsilonMutationScore","True")
     sub(root, "mutatedPeptidesSeparately", "True")
     sub(root, "proteogenomicPeptidesSeparately", "True")
-    sub(root, "useMultModifications",  "True")
-    sub(root, "maxMissedCleavages",    2)
+    sub(root, "minDeltaScoreUnmodifiedPeptides", 0)
+    sub(root, "minDeltaScoreModifiedPeptides",   6)
+    sub(root, "minScoreUnmodifiedPeptides",      0)
+    sub(root, "minScoreModifiedPeptides",        40)
+    sub(root, "secondPeptide",       "True")
+    sub(root, "matchBetweenRuns",    "False")
+    sub(root, "matchUnidentifiedFeatures", "False")
+    sub(root, "matchBetweenRunsFdr", "False")
+    sub(root, "dependentPeptides",   "False")
+    sub(root, "dependentPeptideFdr", 0)
+    sub(root, "dependentPeptideMassBin", 0)
+    sub(root, "dependentPeptidesBetweenRuns", "False")
+    sub(root, "dependentPeptidesWithinExperiment", "False")
+    sub(root, "dependentPeptidesWithinParameterGroup", "False")
+    sub(root, "dependentPeptidesRestrictFractions", "False")
+    sub(root, "dependentPeptidesFractionDifference", 0)
+    sub(root, "ibaq",               "False")
+    sub(root, "top3",               "False")
+    sub(root, "independentEnzymes", "False")
+    sub(root, "useDeltaScore",      "False")
+    sub(root, "splitProteinGroupsByTaxonomy", "False")
+    sub(root, "taxonomyLevel",      "Species")
+    sub(root, "avalon",             "False")
+    sub(root, "nModColumns",        3)
+    sub(root, "ibaqLogFit",         "False")
+    sub(root, "razorProteinFdr",    "True")
+    sub(root, "deNovoSequencing",   "False")
+    sub(root, "massDifferenceSearch", "False")
+    sub(root, "minPepLen",          7)
+    sub(root, "psmFdrCrosslink",    0.01)
+    sub(root, "peptideFdr",         1)    # 100% at peptide level; protein FDR controls
+    sub(root, "proteinFdr",         1)    # use minPeptides=1 filter instead
+    sub(root, "siteFdr",            0.01)
+    sub(root, "minPeptides",        1)    # ← key: allow single-peptide protein IDs
+    sub(root, "minRazorPeptides",   1)
+    sub(root, "minUniquePeptides",  0)
+    sub(root, "useCounterparts",    "False")
+    sub(root, "quantMode",          1)    # 1 = reporter ion (TMT)
+    sub(root, "mainSearchMaxCombinations", 200)
+    sub(root, "writeMsScansTable",  "True")
+    sub(root, "writeMsmsScansTable","True")
+    sub(root, "writeMs3ScansTable", "False")
+    sub(root, "writeAllPeptidesTable", "True")
+    sub(root, "writeMzTab",         "False")
+    sub(root, "writeSdrf",          "False")   # ← CRITICAL: prevents SDRF crash
+    sub(root, "useSeriesReporters", "False")
+    sub(root, "numThreads",         n_threads)
+    sub(root, "emailAddress",       "")
+    sub(root, "smtpHost",           "")
+    sub(root, "emailFromAddress",   "")
+    sub(root, "fixedCombinedFolder",out_dir)
+    sub(root, "fullMinMz",          -1.79589544172745e+308)
+    sub(root, "fullMaxMz",           1.79589544172745e+308)
+    sub(root, "sendEmail",          "False")
+    sub(root, "ionCountIntensities","False")
 
-    # FDR thresholds
-    sub(root, "psmFdr",                0.01)
-    sub(root, "proteinFdr",            0.01)
-    sub(root, "siteFdr",               0.01)
-    sub(root, "minPeptidesProtein",    1)      # ← key: allow single-peptide hits
-    sub(root, "minScoreForMBR",        0)
-    sub(root, "useNormRatiosForPeptideAndProteinResults", "True")
-    sub(root, "minUniquePeptides",     0)      # 0 = no unique-peptide requirement
-    sub(root, "minRazorPeptides",      1)
+    # ── RAW FILES ─────────────────────────────────────────────────────────────
+    fp_el   = sub(root, "filePaths")
+    exp_el  = sub(root, "experiments")
+    frac_el = sub(root, "fractions")
+    ptm_el  = sub(root, "ptms")
+    pg_el   = sub(root, "paramGroupIndices")
 
-    # Quantification
-    sub(root, "quantMode",             1)      # 1 = reporter ion (TMT/iTRAQ)
-    sub(root, "reporterMassTolerance", 0.003)  # 3 mDa (high-res MS2)
-    sub(root, "reporterPIF",           0.75)
-    sub(root, "filterPIF",             "True")
-    sub(root, "lcmsRunType",           "Reporter ion MS2")
+    for raw in sorted(raw_files):
+        sub(fp_el,   "string",  raw)
+        sub(exp_el,  "string",  plex_id)
+        sub(frac_el, "short",   32767)    # 32767 = no fractionation
+        sub(ptm_el,  "boolean", "False")
+        sub(pg_el,   "int",     0)
 
-    # ── PARAMETER GROUP (enzyme, mods, mass tolerances) ───────────────────────
+    ref_ch = sub(root, "referenceChannel")
+    for _ in sorted(raw_files):
+        sub(ref_ch, "string", "")
+
+    # ── PARAMETER GROUP ───────────────────────────────────────────────────────
     pgs = sub(root, "parameterGroups")
     pg  = sub(pgs, "parameterGroup")
 
-    # isobaricLabels: left empty — MaxQuant infers TMT11 channel masses from
-    # the TMT11plex fixed modification + lcmsRunType internally.
-    sub(pg, "isobaricLabels")
+    sub(pg, "msInstrument",  0)    # 0 = Orbitrap
+    sub(pg, "maxCharge",     7)
+    sub(pg, "lcmsRunType",   "Reporter MS2")   # inside parameterGroup
+    sub(pg, "maxMissedCleavages", 2)
+    sub(pg, "multiplicity",  1)
+    sub(pg, "complementaryReporterType", 0)
+    sub(pg, "reporterNormalization",     0)
 
-    # MS1 mass tolerance
-    sub(pg, "maxCharge",        7)
-    sub(pg, "msInstrument",     0)   # 0 = default (Orbitrap)
-    sub(pg, "massTolerancePpm", 20)  # 20 ppm MS1
-
-    # Fixed modifications: carbamidomethylation + TMT11 on K and peptide N-term
+    # Fixed mods: only Carbamidomethyl — TMT is handled via isobaricLabels
     fixed = sub(pg, "fixedModifications")
     sub(fixed, "string", "Carbamidomethyl (C)")
-    sub(fixed, "string", "TMT11plex (K)")
-    sub(fixed, "string", "TMT11plex (Peptide N-term)")
+
+    # Enzyme
+    enzymes = sub(pg, "enzymes")
+    sub(enzymes, "string", "Trypsin/P")
+    sub(pg, "enzymesFirstSearch")
+    sub(pg, "useVariableModificationsFirstSearch", "False")
 
     # Variable modifications
     var = sub(pg, "variableModifications")
     sub(var, "string", "Oxidation (M)")
     sub(var, "string", "Acetyl (Protein N-term)")
 
-    sub(pg, "useEntorhinal",                 "False")
-    sub(pg, "horizon",                        100)
-    sub(pg, "centroidMatchTol",               8)
-    sub(pg, "centroidHalfWidth",              35)
-    sub(pg, "valleyFactor",                   1.4)
-    sub(pg, "isotopeValleyFactor",            1.2)
-    sub(pg, "advancedPeakSplitting",          "False")
-    sub(pg, "customProteinQuantification",    "False")
-    sub(pg, "customProteinQuantificationFile","")
-    sub(pg, "minScanNumber",                  0)
-    sub(pg, "maxScanNumber",                  2147483647)
+    # TMT11 isobaric labels — use MaxQuant's internal modification names.
+    # These names must exactly match entries in MaxQuant's modifications.xml.
+    # Channels 126–131N: TMT10plex prefix; channel 131C: TMT11plex prefix.
+    iso_el = sub(pg, "isobaricLabels")
+    for internal_lys, terminal_nter, ch_key in TMT11_CHANNELS:
+        ili = sub(iso_el, "IsobaricLabelInfo")
+        sub(ili, "internalLabel",      internal_lys)
+        sub(ili, "terminalLabel",      terminal_nter)
+        sub(ili, "correctionFactorM2", 0)
+        sub(ili, "correctionFactorM1", 0)
+        sub(ili, "correctionFactorP1", 0)
+        sub(ili, "correctionFactorP2", 0)
+        sub(ili, "tmtLike",            "True")
 
-    # Enzyme
-    enzymes = sub(pg, "enzymes")
-    sub(enzymes, "string", "Trypsin/P")
-    sub(pg, "enzymesFirstSearch")
-    sub(pg, "allowedMissedCleavages", 2)
+    sub(pg, "neucodeLabels")
+    sub(pg, "variableModificationsFirstSearch")
 
-    # MS2 mass tolerance (Orbitrap)
-    sub(pg, "msmsTolerancePpm", 20)
-
-    # Peptide length and mass range
-    sub(pg, "minPeptideLen",     7)
-    sub(pg, "maxPeptideLen",     60)
-
-    # Match between runs
-    sub(pg, "matchBetweenRuns", "False")  # off for TMT (fractions handle it)
-
-    sub(pg, "precursorMassTolerancePpm", 20)
-    sub(pg, "msmsTolerancePpmForCalib",  20)
+    # Mass tolerances (inside parameterGroup per reference)
+    sub(pg, "firstSearchTol",        20)   # MS1 first pass (ppm)
+    sub(pg, "mainSearchTol",         4.5)  # MS1 main search (ppm)
+    sub(pg, "searchTolInPpm",        "True")
+    sub(pg, "isotopeMatchTol",       2)
+    sub(pg, "isotopeMatchTolInPpm",  "True")
+    sub(pg, "reporterMassTolerance", 0.003)  # 3 mDa reporter ion (high-res MS2)
+    sub(pg, "reporterPif",           0.75)   # precursor ion fraction filter
+    sub(pg, "filterPif",             "True")
+    sub(pg, "isobaricSumOverWindow", "True")
+    sub(pg, "isobaricWeightExponent","0.75")
 
     return root
 
