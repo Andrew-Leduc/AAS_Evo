@@ -182,7 +182,7 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     sub(root, "filterPIF",             "True")
     sub(root, "lcmsRunType",           "Reporter ion MS2")
 
-    # ── TMT CHANNEL LABELS ────────────────────────────────────────────────────
+    # ── TMT CHANNEL LABELS (built here, written inside parameterGroup below) ────
     # Build channel_key → label from channel_entries (dedup per channel)
     seen = {}
     for entry in channel_entries:
@@ -190,10 +190,15 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
         if ch not in seen:
             seen[ch] = channel_label(entry["case_id"], entry["sample_type"])
 
-    iso_el = sub(root, "isobaricLabels")
+    # ── PARAMETER GROUP (enzyme, mods, mass tolerances) ───────────────────────
+    pgs = sub(root, "parameterGroups")
+    pg  = sub(pgs, "parameterGroup")
+
+    # isobaricLabels must live inside parameterGroup (GroupParams.GetLabelInfoMap)
+    iso_el = sub(pg, "isobaricLabels")
     for internal_label, mass in TMT11_CHANNELS:
         # Map TMT11-127N → 127N → look up in seen via TMT_CHANNEL_MAP values
-        ch_key = internal_label.replace("TMT11-", "").replace("TMT11-", "")
+        ch_key = internal_label.replace("TMT11-", "")
         # find which tmt_channel maps to this channel string
         sample_name = next(
             (seen[k] for k, v in TMT_CHANNEL_MAP.items()
@@ -210,10 +215,6 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
         sub(ili, "tmtLike",              "True")
         sub(ili, "reporterMass",         mass)
         sub(ili, "name",                 sample_name)
-
-    # ── PARAMETER GROUP (enzyme, mods, mass tolerances) ───────────────────────
-    pgs = sub(root, "parameterGroups")
-    pg  = sub(pgs, "parameterGroup")
 
     # MS1 mass tolerance
     sub(pg, "maxCharge",        7)
