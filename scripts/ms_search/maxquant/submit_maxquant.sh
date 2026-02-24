@@ -4,7 +4,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
-#SBATCH --partition=short
+#SBATCH --partition=slavov
 #SBATCH --job-name=maxquant
 #SBATCH --output=/scratch/leduc.an/AAS_Evo/logs/maxquant_%A_%a.out
 #SBATCH --error=/scratch/leduc.an/AAS_Evo/logs/maxquant_%A_%a.err
