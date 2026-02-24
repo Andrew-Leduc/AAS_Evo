@@ -161,7 +161,6 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     sub(root, "decoyMode",             "revert")
     sub(root, "includeContaminants",   "True")
     sub(root, "maxPeptideMass",        4600.0)
-    sub(root, "epsilonMutationScore",  0.01)
     sub(root, "mutatedPeptidesSeparately", "True")
     sub(root, "useMultModifications",  "True")
     sub(root, "maxMissedCleavages",    2)
