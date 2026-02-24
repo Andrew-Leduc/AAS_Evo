@@ -129,8 +129,29 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     sub(fi, "modificationParseRule", "")
     sub(fi, "taxonomyId",            "")
 
-    sub(root, "fastaFilesProteogenomics")
-    sub(root, "fastaFilesFirstSearch")
+    # Empty lists — do NOT omit these elements (MaxQuant expects them),
+    # but add explicit FastaFileInfo children to prevent MaxQuant from
+    # auto-populating them with garbage parse-rule values as fasta paths.
+    pg_fastas = sub(root, "fastaFilesProteogenomics")
+    pf_fi = sub(pg_fastas, "FastaFileInfo")
+    sub(pf_fi, "fastaFilePath",         "")
+    sub(pf_fi, "identifierParseRule",   r">([^\s]*)")
+    sub(pf_fi, "descriptionParseRule",  r">(.*)")
+    sub(pf_fi, "taxonomyParseRule",     "")
+    sub(pf_fi, "variationParseRule",    "")
+    sub(pf_fi, "modificationParseRule", "")
+    sub(pf_fi, "taxonomyId",            "")
+
+    fs_fastas = sub(root, "fastaFilesFirstSearch")
+    fs_fi = sub(fs_fastas, "FastaFileInfo")
+    sub(fs_fi, "fastaFilePath",         "")
+    sub(fs_fi, "identifierParseRule",   r">([^\s]*)")
+    sub(fs_fi, "descriptionParseRule",  r">(.*)")
+    sub(fs_fi, "taxonomyParseRule",     "")
+    sub(fs_fi, "variationParseRule",    "")
+    sub(fs_fi, "modificationParseRule", "")
+    sub(fs_fi, "taxonomyId",            "")
+
     sub(root, "fixedSearchFolder",   "")
 
     # ── GLOBAL SETTINGS (matching reference mqpar field order) ────────────────
