@@ -100,7 +100,7 @@ def sub(parent, tag, text=None):
     return el
 
 
-def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
+def build_mqpar(raw_files, fasta_path, placeholder_fasta, out_dir, plex_id,
                 channel_entries, n_threads):
     """
     Build and return a MaxQuant mqpar.xml ElementTree for one plex.
@@ -119,26 +119,23 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
                       })
 
     # ── FASTA ─────────────────────────────────────────────────────────────────
+    # MaxQuant always pads fastaFiles to 8 entries in the subprocess mqpar and
+    # calls File.Exists on every slot — empty paths fail validation.  Supply
+    # all 8 slots explicitly: slot 1 = real fasta, slots 2-8 = a minimal
+    # placeholder fasta (1 protein, 6-AA peptide, below minPepLen=7, so it
+    # contributes zero identifications to search results).
+    MQ_FASTA_SLOTS = 8
     fastas = sub(root, "fastaFiles")
-    fi = sub(fastas, "FastaFileInfo")
-    sub(fi, "fastaFilePath",         fasta_path)
-    # Leave parse rules empty — MaxQuant uses its built-in defaults:
-    #   identifierParseRule  → >([^\s]*)
-    #   descriptionParseRule → >(.*)
-    # When non-empty, MaxQuant's subprocess normalization uses these strings
-    # as fastaFilePath values in the extra padded fasta slots, causing
-    # "Fasta file >([^\s]*) doesn't exist" errors.
-    sub(fi, "identifierParseRule",   "")
-    sub(fi, "descriptionParseRule",  "")
-    sub(fi, "taxonomyParseRule",     "")
-    sub(fi, "variationParseRule",    "")
-    sub(fi, "modificationParseRule", "")
-    sub(fi, "taxonomyId",            "")
-
-    # Empty arrays — MaxQuant expects these elements but no child entries
-    # are needed for a standard search (our combined FASTA is in fastaFiles).
-    sub(root, "fastaFilesProteogenomics")
-    sub(root, "fastaFilesFirstSearch")
+    slot_paths = [fasta_path] + [placeholder_fasta] * (MQ_FASTA_SLOTS - 1)
+    for fp in slot_paths:
+        fi = sub(fastas, "FastaFileInfo")
+        sub(fi, "fastaFilePath",         fp)
+        sub(fi, "identifierParseRule",   r">([^\s]*)")
+        sub(fi, "descriptionParseRule",  r">(.*)")
+        sub(fi, "taxonomyParseRule",     "")
+        sub(fi, "variationParseRule",    "")
+        sub(fi, "modificationParseRule", "")
+        sub(fi, "taxonomyId",            "")
 
     sub(root, "fixedSearchFolder",   "")
 
@@ -322,6 +319,16 @@ def main():
     plex_list_path = os.path.join(args.output, "plex_list.txt")
     os.makedirs(mqpar_dir, exist_ok=True)
 
+    # MaxQuant pads fastaFiles to 8 slots in the subprocess mqpar and calls
+    # File.Exists on every slot, failing on empty paths.  Provide a tiny
+    # placeholder fasta for slots 2-8: one protein whose only tryptic peptide
+    # is 6 AA (below minPepLen=7), so it contributes nothing to search results.
+    placeholder_fasta = os.path.abspath(os.path.join(args.output, "placeholder.fasta"))
+    if not os.path.exists(placeholder_fasta):
+        with open(placeholder_fasta, "w") as pf:
+            pf.write(">MQDUMMY MaxQuant_slot_placeholder\nMAAK\n")
+        print(f"  Created placeholder FASTA: {placeholder_fasta}")
+
     print(f"Loading TMT map: {args.tmt_map}")
     plex_to_files, plex_to_channels = load_tmt_map(args.tmt_map)
     print(f"  {len(plex_to_files)} plexes")
@@ -372,6 +379,7 @@ def main():
         root = build_mqpar(
             raw_files=linked_raws,
             fasta_path=fasta_path,
+            placeholder_fasta=placeholder_fasta,
             out_dir=os.path.abspath(out_dir),
             plex_id=plex_id,
             channel_entries=plex_to_channels[plex_id],
