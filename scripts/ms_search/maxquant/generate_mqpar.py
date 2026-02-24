@@ -44,11 +44,15 @@ TMT_CHANNEL_MAP = {
 }
 
 # MaxQuant internal modification names for TMT11plex.
-# Channels 126–131N use "TMT10plex" prefix (same reagent as TMT10);
-# only 131C is unique to TMT11plex.
+# Names must exactly match titles in modifications.xml.
+# Key naming rules (verified from modifications.xml):
+#   - Channel 126:  no N/C suffix  → "TMT10plex-Lys126"  / "TMT10plex-Nter126"
+#   - Channels 127–130: N/C suffix → "TMT10plex-Lys127N" / "TMT10plex-Nter127N" etc.
+#   - Channel 131N: no N/C suffix  → "TMT10plex-Lys131"  / "TMT10plex-Nter131"
+#   - Channel 131C: TMT11plex      → "TMT11plex-Lys131C" / "TMT11plex-Nter131C"
 # Tuple: (internalLabel for Lys, terminalLabel for N-term, channel_key)
 TMT11_CHANNELS = [
-    ("TMT10plex-Lys126C",  "TMT10plex-Nter126C",  "126C"),
+    ("TMT10plex-Lys126",   "TMT10plex-Nter126",   "126C"),
     ("TMT10plex-Lys127N",  "TMT10plex-Nter127N",  "127N"),
     ("TMT10plex-Lys127C",  "TMT10plex-Nter127C",  "127C"),
     ("TMT10plex-Lys128N",  "TMT10plex-Nter128N",  "128N"),
@@ -57,7 +61,7 @@ TMT11_CHANNELS = [
     ("TMT10plex-Lys129C",  "TMT10plex-Nter129C",  "129C"),
     ("TMT10plex-Lys130N",  "TMT10plex-Nter130N",  "130N"),
     ("TMT10plex-Lys130C",  "TMT10plex-Nter130C",  "130C"),
-    ("TMT10plex-Lys131N",  "TMT10plex-Nter131N",  "131N"),
+    ("TMT10plex-Lys131",   "TMT10plex-Nter131",   "131N"),
     ("TMT11plex-Lys131C",  "TMT11plex-Nter131C",  "131C"),
 ]
 
