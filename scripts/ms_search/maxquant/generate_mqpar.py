@@ -713,7 +713,10 @@ def main():
             raw_name = os.path.basename(raw)
             link = os.path.join(out_dir, raw_name)
             if not os.path.exists(link):
-                os.link(raw, link)
+                try:
+                    os.link(raw, link)       # hardlink: same inode, no symlink issues
+                except OSError:
+                    os.symlink(raw, link)    # fallback if cross-device (different mount)
             linked_raws.append(link)
 
         root = build_mqpar(
