@@ -122,35 +122,23 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     fastas = sub(root, "fastaFiles")
     fi = sub(fastas, "FastaFileInfo")
     sub(fi, "fastaFilePath",         fasta_path)
-    sub(fi, "identifierParseRule",   r">([^\s]*)")
-    sub(fi, "descriptionParseRule",  r">(.*)")
+    # Leave parse rules empty — MaxQuant uses its built-in defaults:
+    #   identifierParseRule  → >([^\s]*)
+    #   descriptionParseRule → >(.*)
+    # When non-empty, MaxQuant's subprocess normalization uses these strings
+    # as fastaFilePath values in the extra padded fasta slots, causing
+    # "Fasta file >([^\s]*) doesn't exist" errors.
+    sub(fi, "identifierParseRule",   "")
+    sub(fi, "descriptionParseRule",  "")
     sub(fi, "taxonomyParseRule",     "")
     sub(fi, "variationParseRule",    "")
     sub(fi, "modificationParseRule", "")
     sub(fi, "taxonomyId",            "")
 
-    # Empty lists — do NOT omit these elements (MaxQuant expects them),
-    # but add explicit FastaFileInfo children to prevent MaxQuant from
-    # auto-populating them with garbage parse-rule values as fasta paths.
-    pg_fastas = sub(root, "fastaFilesProteogenomics")
-    pf_fi = sub(pg_fastas, "FastaFileInfo")
-    sub(pf_fi, "fastaFilePath",         "")
-    sub(pf_fi, "identifierParseRule",   r">([^\s]*)")
-    sub(pf_fi, "descriptionParseRule",  r">(.*)")
-    sub(pf_fi, "taxonomyParseRule",     "")
-    sub(pf_fi, "variationParseRule",    "")
-    sub(pf_fi, "modificationParseRule", "")
-    sub(pf_fi, "taxonomyId",            "")
-
-    fs_fastas = sub(root, "fastaFilesFirstSearch")
-    fs_fi = sub(fs_fastas, "FastaFileInfo")
-    sub(fs_fi, "fastaFilePath",         "")
-    sub(fs_fi, "identifierParseRule",   r">([^\s]*)")
-    sub(fs_fi, "descriptionParseRule",  r">(.*)")
-    sub(fs_fi, "taxonomyParseRule",     "")
-    sub(fs_fi, "variationParseRule",    "")
-    sub(fs_fi, "modificationParseRule", "")
-    sub(fs_fi, "taxonomyId",            "")
+    # Empty arrays — MaxQuant expects these elements but no child entries
+    # are needed for a standard search (our combined FASTA is in fastaFiles).
+    sub(root, "fastaFilesProteogenomics")
+    sub(root, "fastaFilesFirstSearch")
 
     sub(root, "fixedSearchFolder",   "")
 
@@ -368,8 +356,21 @@ def main():
         out_dir = os.path.join(args.output, "results", plex_id)
         os.makedirs(out_dir, exist_ok=True)
 
+        # Create symlinks for RAW files inside out_dir.
+        # MaxQuant determines combined/ location from where the RAW files live
+        # (it creates combined/ as a subdirectory of the RAW parent dir).
+        # Symlinking RAW files into out_dir makes MaxQuant place
+        # combined/ at MQ_SEARCH/results/{plex_id}/combined/ as desired.
+        linked_raws = []
+        for raw in found_raws:
+            raw_name = os.path.basename(raw)
+            link = os.path.join(out_dir, raw_name)
+            if not os.path.islink(link) and not os.path.exists(link):
+                os.symlink(raw, link)
+            linked_raws.append(link)
+
         root = build_mqpar(
-            raw_files=found_raws,
+            raw_files=linked_raws,
             fasta_path=fasta_path,
             out_dir=os.path.abspath(out_dir),
             plex_id=plex_id,
