@@ -161,7 +161,9 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     sub(root, "decoyMode",             "revert")
     sub(root, "includeContaminants",   "True")
     sub(root, "maxPeptideMass",        4600.0)
+    sub(root, "epsilonMutationScore",  "True")   # boolean toggle, not a float
     sub(root, "mutatedPeptidesSeparately", "True")
+    sub(root, "proteogenomicPeptidesSeparately", "True")
     sub(root, "useMultModifications",  "True")
     sub(root, "maxMissedCleavages",    2)
 
@@ -182,39 +184,13 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     sub(root, "filterPIF",             "True")
     sub(root, "lcmsRunType",           "Reporter ion MS2")
 
-    # ── TMT CHANNEL LABELS (built here, written inside parameterGroup below) ────
-    # Build channel_key → label from channel_entries (dedup per channel)
-    seen = {}
-    for entry in channel_entries:
-        ch = entry["channel"]
-        if ch not in seen:
-            seen[ch] = channel_label(entry["case_id"], entry["sample_type"])
-
     # ── PARAMETER GROUP (enzyme, mods, mass tolerances) ───────────────────────
     pgs = sub(root, "parameterGroups")
     pg  = sub(pgs, "parameterGroup")
 
-    # isobaricLabels must live inside parameterGroup (GroupParams.GetLabelInfoMap)
-    iso_el = sub(pg, "isobaricLabels")
-    for internal_label, mass in TMT11_CHANNELS:
-        # Map TMT11-127N → 127N → look up in seen via TMT_CHANNEL_MAP values
-        ch_key = internal_label.replace("TMT11-", "")
-        # find which tmt_channel maps to this channel string
-        sample_name = next(
-            (seen[k] for k, v in TMT_CHANNEL_MAP.items()
-             if v == ch_key and k in seen),
-            ch_key)   # fall back to channel name if not in annotation
-
-        ili = sub(iso_el, "IsobaricLabelInfo")
-        sub(ili, "internalLabel",        internal_label)
-        sub(ili, "terminalLabel",        internal_label)
-        sub(ili, "correctionFactorM2",   0)
-        sub(ili, "correctionFactorM1",   0)
-        sub(ili, "correctionFactorP1",   0)
-        sub(ili, "correctionFactorP2",   0)
-        sub(ili, "tmtLike",              "True")
-        sub(ili, "reporterMass",         mass)
-        sub(ili, "name",                 sample_name)
+    # isobaricLabels: left empty — MaxQuant infers TMT11 channel masses from
+    # the TMT11plex fixed modification + lcmsRunType internally.
+    sub(pg, "isobaricLabels")
 
     # MS1 mass tolerance
     sub(pg, "maxCharge",        7)
