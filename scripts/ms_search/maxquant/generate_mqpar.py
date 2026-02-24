@@ -228,7 +228,7 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     sub(root, "writeDiaFragmentTable",       "False")
     sub(root, "writeDiaFragmentQuantTable",  "False")
     sub(root, "writeMzTab",                  "False")
-    # writeSdrf removed in MQ 2.7.5.0
+    sub(root, "writeSdrf",                   "False")   # must be False for CLI: no SDRF annotations provided
     sub(root, "disableMd5",                  "False")
     sub(root, "cacheBinInds",                "True")
     sub(root, "etdIncludeB",                 "False")
