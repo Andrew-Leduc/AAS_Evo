@@ -228,7 +228,6 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     sub(root, "writeDiaFragmentTable",       "False")
     sub(root, "writeDiaFragmentQuantTable",  "False")
     sub(root, "writeMzTab",                  "False")
-    sub(root, "writeSdrf",                   "False")   # must be False for CLI: no SDRF annotations provided
     sub(root, "disableMd5",                  "False")
     sub(root, "cacheBinInds",                "True")
     sub(root, "etdIncludeB",                 "False")
@@ -264,9 +263,10 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     pg_el   = sub(root, "paramGroupIndices")
 
     for raw in sorted(raw_files):
+        basename_no_ext = os.path.splitext(os.path.basename(raw))[0]
         sub(fp_el,   "string",  raw)
-        sub(exp_el,  "string",  plex_id)
-        sub(frac_el, "short",   32767)     # 32767 = no fractionation
+        sub(exp_el,  "string",  basename_no_ext)  # per-file experiment name (matches MQ CLI template)
+        sub(frac_el, "short",   32767)             # 32767 = no fractionation (matches MQ CLI template)
         sub(ptm_el,  "boolean", "False")
         sub(pg_el,   "int",     0)
 
