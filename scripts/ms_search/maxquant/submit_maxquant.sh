@@ -69,8 +69,8 @@ if [[ ! -f "$MAXQUANT_EXE" ]]; then
     exit 1
 fi
 
-# Skip if already completed (allPeptides.txt is written last)
-if [[ -f "${OUTDIR}/combined/txt/allPeptides.txt" ]]; then
+# Skip if already completed (evidence.txt is always written by MaxQuant)
+if [[ -f "${OUTDIR}/combined/txt/evidence.txt" ]]; then
     echo "[$(date)] Already completed: $PLEX_ID"
     exit 0
 fi

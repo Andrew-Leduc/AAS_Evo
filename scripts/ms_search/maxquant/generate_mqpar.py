@@ -4,18 +4,19 @@ generate_mqpar.py
 
 Generate MaxQuant mqpar.xml parameter files for per-plex TMT-11 MS searches.
 
-MaxQuant handles decoys internally (reversed sequences) — no separate decoy
-step needed. With minPeptidesProtein=1, single-peptide protein identifications
-are reported, which is critical for our mutant entries (each has exactly one
-tryptic peptide). This avoids the ProteinProphet single-peptide penalty.
+MaxQuant handles decoys internally (reversed sequences, decoyMode=revert) —
+do NOT add REV_ entries to the FASTA. With minPeptides=1, single-peptide
+protein identifications are reported, which is critical for our mutant entries.
 
 Results land in {output_dir}/{plex_id}/combined/
+RAW files are symlinked into results/{plex_id}/ so MaxQuant places combined/
+there automatically (MaxQuant creates combined/ in the parent of the RAW files).
 
 Usage:
     python3 generate_mqpar.py \
         --tmt-map /path/to/pdc_file_tmt_map.tsv \
         --raw-dir /path/to/RAW/ \
-        --fasta-dir /path/to/FASTA/per_plex/ \
+        --fasta-dir /path/to/FASTA/per_plex_mq/ \
         -o /path/to/MQ_SEARCH/ \
         [--threads 16]
 """
@@ -44,8 +45,8 @@ TMT_CHANNEL_MAP = {
 }
 
 # MaxQuant internal modification names for TMT11plex.
-# Names must exactly match titles in modifications.xml.
-# Key naming rules (verified from modifications.xml):
+# Names verified against modifications.xml in MaxQuant 2.7.5.0.
+# Key naming rules:
 #   - Channel 126:  no N/C suffix  → "TMT10plex-Lys126"  / "TMT10plex-Nter126"
 #   - Channels 127–130: N/C suffix → "TMT10plex-Lys127N" / "TMT10plex-Nter127N" etc.
 #   - Channel 131N: no N/C suffix  → "TMT10plex-Lys131"  / "TMT10plex-Nter131"
@@ -87,12 +88,6 @@ def load_tmt_map(tmt_map_path):
     return plex_to_files, plex_to_channels
 
 
-def channel_label(case_id, sample_type):
-    if case_id.lower() in ("ref", "reference", "pooled", "pool", ""):
-        return "Reference"
-    return f"{case_id}_{sample_type}" if sample_type else case_id
-
-
 def sub(parent, tag, text=None):
     el = ET.SubElement(parent, tag)
     if text is not None:
@@ -105,12 +100,15 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     """
     Build and return a MaxQuant mqpar.xml ElementTree for one plex.
 
-    Structure validated against a working TMT11 GUI-generated mqpar (v2.4.7).
-    Key choices:
-      - minPeptides = 1         → single-peptide proteins reported (our mutants)
-      - decoyMode = revert      → MaxQuant generates reversed decoys internally
-      - isobaricLabels          → TMT11 channels using MaxQuant internal mod names
-      - writeSdrf = False       → disable SDRF writer (crashes when channels empty)
+    Structure mirrors sample_mqpar.txt (MaxQuant 2.7.5.0 GUI-generated).
+
+    Custom choices vs sample:
+      - identifierParseRule: >([^\\s]*)   works for sp|/tr|/mut|/comp| headers
+        (sample uses >[^|]*\\|(.*?)\\| which only captures UniProt accession)
+      - taxonomyParseRule: ""             our headers have no OX= field
+      - RAW files: symlinked into results/{plex_id}/ so combined/ lands there
+      - Carbamidomethyl (C): kept as fixed mod (matches sample_mqpar)
+      - writeAllPeptidesTable: True       needed for SLURM completion detection
     """
     root = ET.Element("MaxQuantParams",
                       attrib={
@@ -122,82 +120,141 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     fastas = sub(root, "fastaFiles")
     fi = sub(fastas, "FastaFileInfo")
     sub(fi, "fastaFilePath",         fasta_path)
-    sub(fi, "identifierParseRule",   r">([^\s]*)")
+    sub(fi, "identifierParseRule",   r">([^\s]*)")   # custom: handles mut|/comp| prefixes
     sub(fi, "descriptionParseRule",  r">(.*)")
-    sub(fi, "taxonomyParseRule",     "")
+    sub(fi, "taxonomyParseRule",     "")              # no OX= in our headers
     sub(fi, "variationParseRule",    "")
     sub(fi, "modificationParseRule", "")
     sub(fi, "taxonomyId",            "")
 
-    sub(root, "fixedSearchFolder",   "")
+    sub(root, "fastaFilesProteogenomics")  # empty — required
+    sub(root, "fastaFilesFirstSearch")     # empty — required
+    sub(root, "fixedSearchFolder",         "")
 
-    # ── GLOBAL SETTINGS (matching reference mqpar field order) ────────────────
-    sub(root, "andromedaCacheSize",  350000)
-    sub(root, "advancedRatios",      "True")
-    sub(root, "pvalThres",           0.005)
-    sub(root, "rtShift",             "False")
-    sub(root, "separateLfq",         "False")
-    sub(root, "lfqStabilizeLargeRatios", "True")
-    sub(root, "lfqRequireMsms",      "True")
-    sub(root, "lfqBayesQuant",       "False")
-    sub(root, "decoyMode",           "revert")
-    sub(root, "includeContaminants", "True")
-    sub(root, "maxPeptideMass",      4600)
+    # ── GLOBAL SETTINGS (field order matches sample_mqpar.txt / MQ 2.7.5.0) ──
+    sub(root, "andromedaCacheSize",          350000)
+    sub(root, "advancedRatios",              "True")
+    sub(root, "pvalThres",                   0.005)
+    sub(root, "rtShift",                     "False")
+    sub(root, "separateLfq",                 "False")
+    sub(root, "lfqStabilizeLargeRatios",     "True")
+    sub(root, "lfqRequireMsms",              "True")
+    sub(root, "lfqBayesQuant",               "False")
+    sub(root, "decoyMode",                   "revert")  # MQ generates reversed decoys
+    sub(root, "includeContaminants",         "True")
+    sub(root, "maxPeptideMass",              4600)
+    sub(root, "epsilonMutationScore",        "True")
+    sub(root, "mutatedPeptidesSeparately",   "True")
+    sub(root, "proteogenomicPeptidesSeparately", "True")
     sub(root, "minDeltaScoreUnmodifiedPeptides", 0)
     sub(root, "minDeltaScoreModifiedPeptides",   6)
     sub(root, "minScoreUnmodifiedPeptides",      0)
     sub(root, "minScoreModifiedPeptides",        40)
-    sub(root, "secondPeptide",       "True")
-    sub(root, "matchBetweenRuns",    "False")
-    sub(root, "matchUnidentifiedFeatures", "False")
-    sub(root, "matchBetweenRunsFdr", "False")
-    sub(root, "dependentPeptides",   "False")
-    sub(root, "dependentPeptideFdr", 0)
-    sub(root, "dependentPeptideMassBin", 0)
-    sub(root, "dependentPeptidesBetweenRuns", "False")
-    sub(root, "dependentPeptidesWithinExperiment", "False")
-    sub(root, "dependentPeptidesWithinParameterGroup", "False")
-    sub(root, "dependentPeptidesRestrictFractions", "False")
-    sub(root, "dependentPeptidesFractionDifference", 0)
-    sub(root, "ibaq",               "False")
-    sub(root, "top3",               "False")
-    sub(root, "independentEnzymes", "False")
-    sub(root, "useDeltaScore",      "False")
-    sub(root, "splitProteinGroupsByTaxonomy", "False")
-    sub(root, "taxonomyLevel",      "Species")
-    sub(root, "avalon",             "False")
-    sub(root, "nModColumns",        3)
-    sub(root, "ibaqLogFit",         "False")
-    sub(root, "razorProteinFdr",    "True")
-    sub(root, "deNovoSequencing",   "False")
-    sub(root, "massDifferenceSearch", "False")
-    sub(root, "minPepLen",          7)
-    sub(root, "psmFdrCrosslink",    0.01)
-    sub(root, "peptideFdr",         1)    # 100% at peptide level; protein FDR controls
-    sub(root, "proteinFdr",         1)    # use minPeptides=1 filter instead
-    sub(root, "siteFdr",            0.01)
-    sub(root, "minPeptides",        1)    # ← key: allow single-peptide protein IDs
-    sub(root, "minRazorPeptides",   1)
-    sub(root, "minUniquePeptides",  0)
-    sub(root, "useCounterparts",    "False")
-    sub(root, "quantMode",          1)    # 1 = reporter ion (TMT)
-    sub(root, "mainSearchMaxCombinations", 200)
-    sub(root, "writeMsScansTable",  "True")
-    sub(root, "writeMsmsScansTable","True")
-    sub(root, "writeMs3ScansTable", "False")
-    sub(root, "writeAllPeptidesTable", "True")
-    sub(root, "writeMzTab",         "False")
-    sub(root, "writeSdrf",          "False")   # ← CRITICAL: prevents SDRF crash
-    sub(root, "useSeriesReporters", "False")
-    sub(root, "numThreads",         n_threads)
-    sub(root, "emailAddress",       "")
-    sub(root, "smtpHost",           "")
-    sub(root, "emailFromAddress",   "")
-    sub(root, "fixedCombinedFolder",out_dir)
-    sub(root, "fullMinMz",          -1.79589544172745e+308)
-    sub(root, "fullMaxMz",           1.79589544172745e+308)
-    sub(root, "sendEmail",          "False")
-    sub(root, "ionCountIntensities","False")
+    sub(root, "secondPeptide",               "True")
+    sub(root, "matchBetweenRuns",            "False")
+    sub(root, "matchUnidentifiedFeatures",   "False")
+    sub(root, "matchBetweenRunsFdr",         "False")
+    sub(root, "dependentPeptides",           "False")
+    sub(root, "dependentPeptideFdr",         0)
+    sub(root, "dependentPeptideMassBin",     0)
+    sub(root, "dependentPeptidesBetweenRuns",              "False")
+    sub(root, "dependentPeptidesWithinExperiment",         "False")
+    sub(root, "dependentPeptidesWithinParameterGroup",     "False")
+    sub(root, "dependentPeptidesRestrictFractions",        "False")
+    sub(root, "dependentPeptidesFractionDifference",       0)
+    sub(root, "ibaq",                        "False")
+    sub(root, "top3",                        "False")
+    sub(root, "independentEnzymes",          "False")
+    sub(root, "useDeltaScore",               "False")
+    sub(root, "splitProteinGroupsByTaxonomy","False")
+    sub(root, "taxonomyLevel",               "Species")
+    sub(root, "avalon",                      "False")
+    sub(root, "nModColumns",                 3)
+    sub(root, "ibaqLogFit",                  "False")
+    sub(root, "ibaqChargeNormalization",     "False")
+    sub(root, "razorProteinFdr",             "True")
+    sub(root, "deNovoSequencing",            "False")
+    sub(root, "deNovoVarMods",               "False")
+    sub(root, "deNovoCompleteSequence",      "False")
+    sub(root, "deNovoCalibratedMasses",      "False")
+    sub(root, "deNovoMaxIterations",         0)
+    sub(root, "deNovoProteaseReward",        0)
+    sub(root, "deNovoProteaseRewardTof",     0)
+    sub(root, "deNovoAgPenalty",             0)
+    sub(root, "deNovoGgPenalty",             0)
+    sub(root, "deNovoUseComplementScore",    "True")
+    sub(root, "deNovoUseProteaseScore",      "True")
+    sub(root, "deNovoUseWaterLossScore",     "True")
+    sub(root, "deNovoUseAmmoniaLossScore",   "True")
+    sub(root, "deNovoUseA2Score",            "True")
+    sub(root, "deNovoMassClusterTolDa",      0)
+    sub(root, "deNovoScalingFactor",         0)
+    sub(root, "massDifferenceSearch",        "False")
+    sub(root, "isotopeCalc",                 "False")
+    sub(root, "minPeptideLength",            7)       # ← correct 2.7.5.0 field name
+    sub(root, "psmFdrCrosslink",             0.01)
+    sub(root, "peptideFdr",                  0.01)
+    sub(root, "proteinFdr",                  0.01)
+    sub(root, "siteFdr",                     0.01)
+    sub(root, "minPeptideLengthForUnspecificSearch", 8)
+    sub(root, "maxPeptideLengthForUnspecificSearch", 25)
+    sub(root, "useNormRatiosForOccupancy",   "True")
+    sub(root, "minPeptides",                 1)    # ← key: single-peptide proteins reported
+    sub(root, "minRazorPeptides",            1)
+    sub(root, "minUniquePeptides",           0)
+    sub(root, "useCounterparts",             "False")
+    sub(root, "advancedSiteIntensities",     "True")
+    sub(root, "minRatioCount",               2)
+    sub(root, "restrictProteinQuantification", "True")
+    restrict_mods = sub(root, "restrictMods")
+    sub(restrict_mods, "string", "Oxidation (M)")
+    sub(restrict_mods, "string", "Acetyl (Protein N-term)")
+    sub(root, "matchingTimeWindow",          0)
+    sub(root, "matchingIonMobilityWindow",   0)
+    sub(root, "alignmentTimeWindow",         0)
+    sub(root, "alignmentIonMobilityWindow",  0)
+    sub(root, "numberOfCandidatesMsms",      15)
+    sub(root, "compositionPrediction",       0)
+    sub(root, "quantMode",                   1)    # 1 = reporter ion (TMT)
+    sub(root, "massDifferenceMods")                 # empty
+    sub(root, "mainSearchMaxCombinations",   200)
+    sub(root, "writeMsScansTable",           "False")
+    sub(root, "writeMsmsScansTable",         "True")
+    sub(root, "writePasefMsmsScansTable",    "True")
+    sub(root, "writeAccumulatedMsmsScansTable", "True")
+    sub(root, "writeMs3ScansTable",          "True")
+    sub(root, "writeAllPeptidesTable",       "True")  # needed for SLURM completion check
+    sub(root, "writeMzRangeTable",           "True")
+    sub(root, "writeDiaFragmentTable",       "False")
+    sub(root, "writeDiaFragmentQuantTable",  "False")
+    sub(root, "writeMzTab",                  "False")
+    # writeSdrf removed in MQ 2.7.5.0
+    sub(root, "disableMd5",                  "False")
+    sub(root, "cacheBinInds",                "True")
+    sub(root, "etdIncludeB",                 "False")
+    sub(root, "ms2PrecursorShift",           0)
+    sub(root, "complementaryIonPpm",         20)
+    sub(root, "variationParseRule",          "")
+    sub(root, "variationMode",               "none")
+    sub(root, "useSeriesReporters",          "False")
+    sub(root, "name",                        plex_id)
+    sub(root, "maxQuantVersion",             "2.7.5.0")
+    sub(root, "pluginFolder",                "")
+    sub(root, "numThreads",                  n_threads)
+    sub(root, "emailAddress",                "")
+    sub(root, "smtpHost",                    "")
+    sub(root, "emailFromAddress",            "")
+    # fixedCombinedFolder removed in MQ 2.7.5.0; output dir controlled by symlinks
+    sub(root, "fullMinMz",   -1.7976931348623157e+308)
+    sub(root, "fullMaxMz",    1.7976931348623157e+308)
+    sub(root, "sendEmail",                   "False")
+    sub(root, "ionCountIntensities",         "False")
+    sub(root, "verboseColumnHeaders",        "False")
+    sub(root, "calcPeakProperties",          "False")
+    sub(root, "showCentroidMassDifferences", "False")
+    sub(root, "showIsotopeMassDifferences",  "False")
+    # useDotNetCore removed in MQ 2.7.5.0
+    sub(root, "profilePerformance",          "False")
 
     # ── RAW FILES ─────────────────────────────────────────────────────────────
     fp_el   = sub(root, "filePaths")
@@ -209,7 +266,7 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     for raw in sorted(raw_files):
         sub(fp_el,   "string",  raw)
         sub(exp_el,  "string",  plex_id)
-        sub(frac_el, "short",   32767)    # 32767 = no fractionation
+        sub(frac_el, "short",   32767)     # 32767 = no fractionation
         sub(ptm_el,  "boolean", "False")
         sub(pg_el,   "int",     0)
 
@@ -217,38 +274,101 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
     for _ in sorted(raw_files):
         sub(ref_ch, "string", "")
 
+    # Post-referenceChannel global fields
+    sub(root, "lfqTopNPeptides",             0)
+    sub(root, "diaJoinPrecChargesForLfq",    "False")
+    sub(root, "diaFragChargesForQuant",      1)
+    sub(root, "gridSpacing",                 0.1)
+    sub(root, "proteinGroupingFile",         "")
+    sub(root, "simplePepCalculation",        "False")
+    sub(root, "useAndromeda20",              "False")
+    sub(root, "useAndromeda20DefaultModel",  "False")
+    sub(root, "andromeda20AltModelPath",     "")
+    sub(root, "intensityPredictionFolder",   "")
+    sub(root, "encoding",                    0)
+    sub(root, "customTxtFolder",             "")
+
     # ── PARAMETER GROUP ───────────────────────────────────────────────────────
     pgs = sub(root, "parameterGroups")
-    pg  = sub(pgs, "parameterGroup")
+    pg  = sub(pgs,  "parameterGroup")
 
-    sub(pg, "msInstrument",  0)    # 0 = Orbitrap
-    sub(pg, "maxCharge",     7)
-    sub(pg, "lcmsRunType",   "Reporter MS2")   # inside parameterGroup
-    sub(pg, "maxMissedCleavages", 2)
-    sub(pg, "multiplicity",  1)
+    sub(pg, "andromeda20AltModelPath",   "")
+    sub(pg, "andromeda20DefaultModel",   "False")
+    sub(pg, "useAndromeda20",            "False")
+    sub(pg, "msInstrument",              0)     # 0 = Orbitrap
+    sub(pg, "maxCharge",                 7)
+    sub(pg, "minPeakLen",                2)
+    sub(pg, "diaMinPeakLen",             1)
+    sub(pg, "useMs1Centroids",           "False")
+    sub(pg, "useMs2Centroids",           "False")
+    sub(pg, "cutPeaks",                  "True")
+    sub(pg, "gapScans",                  1)
+    sub(pg, "minTime",                   "NaN")
+    sub(pg, "maxTime",                   "NaN")
+    sub(pg, "matchType",                 "MatchFromAndTo")
+    sub(pg, "intensityDetermination",    0)
+    sub(pg, "centroidMatchTol",          8)
+    sub(pg, "centroidMatchTolInPpm",     "True")
+    sub(pg, "centroidHalfWidth",         35)
+    sub(pg, "centroidHalfWidthInPpm",    "True")
+    sub(pg, "valleyFactor",              1.4)
+    sub(pg, "isotopeValleyFactor",       1.2)
+    sub(pg, "advancedPeakSplitting",     "False")
+    sub(pg, "intensityThresholdMs1Dda",  0)
+    sub(pg, "intensityThresholdMs1Dia",  0)
+    sub(pg, "intensityThresholdMs2",     0)
+
+    label_mods = sub(pg, "labelMods")
+    sub(label_mods, "string", "")    # one empty string child — required
+
+    sub(pg, "lcmsRunType",               "Reporter MS2")
+    sub(pg, "reQuantify",                "False")
+    sub(pg, "lfqMode",                   0)
+    sub(pg, "lfqNormClusterSize",        80)
+    sub(pg, "lfqMinEdgesPerNode",        3)
+    sub(pg, "lfqAvEdgesPerNode",         6)
+    sub(pg, "lfqMaxFeatures",            100000)
+    sub(pg, "neucodeMaxPpm",             0)
+    sub(pg, "neucodeResolution",         0)
+    sub(pg, "neucodeResolutionInMda",    "False")
+    sub(pg, "neucodeInSilicoLowRes",     "False")
+    sub(pg, "fastLfq",                   "True")
+    sub(pg, "lfqRestrictFeatures",       "False")
+    sub(pg, "lfqMinRatioCount",          1)
+    sub(pg, "lfqMinRatioCountDia",       2)
+    sub(pg, "lfqPrioritizeMs1Dia",       "True")
+    sub(pg, "lfqLamdaLimit",             20)
+    sub(pg, "lfqMaxIter",                10)
+    sub(pg, "maxLabeledAa",              0)
+    sub(pg, "maxNmods",                  5)
+    sub(pg, "maxMissedCleavages",        2)
+    sub(pg, "maxMissedCleavagesDia",     1)
+    sub(pg, "multiplicity",              1)
+    sub(pg, "enzymeMode",                0)
     sub(pg, "complementaryReporterType", 0)
     sub(pg, "reporterNormalization",     0)
+    sub(pg, "neucodeIntensityMode",      0)
 
-    # Fixed mods: only Carbamidomethyl — TMT is handled via isobaricLabels
     fixed = sub(pg, "fixedModifications")
-    sub(fixed, "string", "Carbamidomethyl (C)")
+    sub(fixed, "string", "Carbamidomethyl (C)")    # standard for IAA-alkylated TMT
 
-    # Enzyme
     enzymes = sub(pg, "enzymes")
     sub(enzymes, "string", "Trypsin/P")
     sub(pg, "enzymesFirstSearch")
-    sub(pg, "useVariableModificationsFirstSearch", "False")
+    sub(pg, "enzymeModeFirstSearch",               0)
+    sub(pg, "useEnzymeFirstSearch",                "False")
+    sub(pg, "useVariableModificationsFirstSearch",  "False")
 
-    # Variable modifications
     var = sub(pg, "variableModifications")
     sub(var, "string", "Oxidation (M)")
     sub(var, "string", "Acetyl (Protein N-term)")
 
-    # TMT11 isobaric labels — use MaxQuant's internal modification names.
-    # These names must exactly match entries in MaxQuant's modifications.xml.
-    # Channels 126–131N: TMT10plex prefix; channel 131C: TMT11plex prefix.
+    sub(pg, "useMultiModification",    "False")
+    sub(pg, "multiModifications")      # empty
+
+    # TMT11 isobaric labels — verified against MQ 2.7.5.0 modifications.xml
     iso_el = sub(pg, "isobaricLabels")
-    for internal_lys, terminal_nter, ch_key in TMT11_CHANNELS:
+    for internal_lys, terminal_nter, _ch_key in TMT11_CHANNELS:
         ili = sub(iso_el, "IsobaricLabelInfo")
         sub(ili, "internalLabel",      internal_lys)
         sub(ili, "terminalLabel",      terminal_nter)
@@ -260,18 +380,257 @@ def build_mqpar(raw_files, fasta_path, out_dir, plex_id,
 
     sub(pg, "neucodeLabels")
     sub(pg, "variableModificationsFirstSearch")
+    sub(pg, "hasAdditionalVariableModifications",  "False")
+    sub(pg, "additionalVariableModifications")
+    sub(pg, "additionalVariableModificationProteins")
 
-    # Mass tolerances (inside parameterGroup per reference)
-    sub(pg, "firstSearchTol",        20)   # MS1 first pass (ppm)
-    sub(pg, "mainSearchTol",         4.5)  # MS1 main search (ppm)
-    sub(pg, "searchTolInPpm",        "True")
-    sub(pg, "isotopeMatchTol",       2)
-    sub(pg, "isotopeMatchTolInPpm",  "True")
-    sub(pg, "reporterMassTolerance", 0.003)  # 3 mDa reporter ion (high-res MS2)
-    sub(pg, "reporterPif",           0.75)   # precursor ion fraction filter
-    sub(pg, "filterPif",             "True")
-    sub(pg, "isobaricSumOverWindow", "True")
-    sub(pg, "isobaricWeightExponent","0.75")
+    sub(pg, "doMassFiltering",             "True")
+    sub(pg, "firstSearchTol",              20)     # MS1 first pass (ppm)
+    sub(pg, "mainSearchTol",               4.5)    # MS1 main (ppm)
+    sub(pg, "searchTolInPpm",              "True")
+    sub(pg, "isotopeMatchTol",             2)
+    sub(pg, "isotopeMatchTolInPpm",        "True")
+    sub(pg, "isotopeTimeCorrelation",      0.6)
+    sub(pg, "theorIsotopeCorrelation",     0.6)
+    sub(pg, "checkMassDeficit",            "True")
+    sub(pg, "recalibrationInPpm",          "True")
+    sub(pg, "intensityDependentCalibration","False")
+    sub(pg, "minScoreForCalibration",      70)
+    sub(pg, "matchLibraryFile",            "False")
+    sub(pg, "libraryFile",                 "")
+    sub(pg, "matchLibraryMassTolPpm",      0)
+    sub(pg, "matchLibraryTimeTolMin",      0)
+    sub(pg, "matchLabelTimeTolMin",        0)
+    sub(pg, "reporterMassTolerance",       0.003)  # 3 mDa — high-res MS2
+    sub(pg, "reporterPif",                 0)
+    sub(pg, "filterPif",                   "False")
+    sub(pg, "reporterFraction",            0)
+    sub(pg, "reporterBasePeakRatio",       0)
+
+    # TIMS settings — all zero/default for Orbitrap data
+    sub(pg, "timsHalfWidth",               0)
+    sub(pg, "timsStep",                    0)
+    sub(pg, "timsResolution",              0)
+    sub(pg, "timsMinMsmsIntensity",        0)
+    sub(pg, "timsRemovePrecursor",         "True")
+    sub(pg, "timsIsobaricLabels",          "False")
+    sub(pg, "timsCollapseMsms",            "True")
+
+    # Cross-linking settings — disabled
+    sub(pg, "crossLinkingType",            0)
+    sub(pg, "crossLinker",                 "")
+    sub(pg, "minMatchXl",                  3)
+    sub(pg, "minPairedPepLenXl",           6)
+    sub(pg, "minScoreDipeptide",           40)
+    sub(pg, "minScoreMonopeptide",         0)
+    sub(pg, "minScorePartialCross",        10)
+    sub(pg, "crosslinkOnlyIntraProtein",   "False")
+    sub(pg, "crosslinkIntensityBasedPrecursor", "True")
+    sub(pg, "isHybridPrecDetermination",   "False")
+    sub(pg, "topXcross",                   3)
+    sub(pg, "doesSeparateInterIntraProteinCross", "False")
+    sub(pg, "crosslinkMaxMonoUnsaturated", 0)
+    sub(pg, "crosslinkMaxMonoSaturated",   0)
+    sub(pg, "crosslinkMaxDiUnsaturated",   0)
+    sub(pg, "crosslinkMaxDiSaturated",     0)
+    sub(pg, "crosslinkModifications")
+    sub(pg, "crosslinkFastaFiles")
+    sub(pg, "crosslinkSites")
+    sub(pg, "crosslinkNetworkFiles")
+    sub(pg, "crosslinkMode",               "")
+
+    sub(pg, "peakRefinement",              "False")
+    sub(pg, "peakRefinementCrosslinking",  "False")
+    sub(pg, "isobaricSumOverWindow",       "True")
+    sub(pg, "isobaricWeightExponent",      "0.75")
+    sub(pg, "collapseMsmsOnIsotopePatterns", "False")
+
+    # DIA settings — all defaults (we run DDA/Reporter MS2)
+    sub(pg, "diaLibraryType",              0)
+    sub(pg, "diaLibraryPaths")
+    sub(pg, "diaEvidencePaths")
+    sub(pg, "diaMsmsPaths")
+    sub(pg, "diaLabelIndsForLibraryMatch")
+    sub(pg, "diaInitialPrecMassTolPpm",    10)
+    sub(pg, "diaInitialFragMassTolPpm",    20)
+    sub(pg, "diaCorrThresholdFeatureClustering",  0.85)
+    sub(pg, "diaPrecTolPpmFeatureClustering",     2)
+    sub(pg, "diaFragTolPpmFeatureClustering",     2)
+    sub(pg, "diaScoreN",                   12)
+    sub(pg, "diaScoreNAdditional",         5)
+    sub(pg, "diaMinScore",                 1.99)
+    sub(pg, "diaXgBoostBaseScore",         0.4)
+    sub(pg, "diaXgBoostSubSample",         0.9)
+    sub(pg, "centroidPosition",            0)
+    sub(pg, "diaQuantMethod",              7)
+    sub(pg, "diaFeatureQuantMethod",       0)
+    sub(pg, "lfqNormType",                 1)
+    sub(pg, "diaTopNForQuant",             6)
+    sub(pg, "diaTopNCorrelatingFragmentsForQuant", 6)
+    sub(pg, "diaFragmentCorrelationForQuant",      0.78)
+    sub(pg, "lfqUsePeptideCorrelation",    "True")
+    sub(pg, "lfqTopNCorrelatingPeptides",  100)
+    sub(pg, "lfqPeptideCorrelation",       0)
+    sub(pg, "diaMinMsmsIntensityForQuant", 0)
+    sub(pg, "diaTopMsmsIntensityQuantileForQuant", 0.85)
+    sub(pg, "diaMinFragmentOverlapScore",  0)
+    sub(pg, "diaMinPrecursorScore",        0)
+    sub(pg, "diaUseProfileCorrelation",    "False")
+    sub(pg, "diaMinPrecProfileCorrelation",0)
+    sub(pg, "diaMinFragProfileCorrelation",0)
+    sub(pg, "diaClassificationModel",      1)
+    sub(pg, "diaXgBoostMinChildWeight",    9)
+    sub(pg, "diaXgBoostMaximumTreeDepth",  4)
+    sub(pg, "diaXgBoostEstimators",        580)
+    sub(pg, "diaXgBoostGamma",             0.9)
+    sub(pg, "diaXgBoostMaxDeltaStep",      3)
+    sub(pg, "diaGlobalMl",                 "True")
+    sub(pg, "diaAdaptiveMassAccuracy",     "False")
+    sub(pg, "diaMassWindowFactor",         3.3)
+    sub(pg, "diaPermuteRt",               "False")
+    sub(pg, "diaPermuteCcs",              "False")
+    sub(pg, "diaBackgroundSubtraction",   "False")
+    sub(pg, "diaBackgroundSubtractionQuantile", 0.5)
+    sub(pg, "diaBackgroundSubtractionFactor",   4)
+    sub(pg, "diaLfqRatioType",             0)
+    sub(pg, "diaTransferQvalue",           0.9)
+    sub(pg, "diaTransferQvalueBetweenLabels",    0.01)
+    sub(pg, "diaTransferQvalueBetweenFractions", 0.01)
+    sub(pg, "diaTransferQvalueBetweenFaims",     0.01)
+    sub(pg, "diaOnlyIsosForRecal",         "True")
+    sub(pg, "diaMinPeaks",                 5)
+    sub(pg, "diaUseFragIntensForMl",       "False")
+    sub(pg, "diaUseFragMassesForMl",       "False")
+    sub(pg, "diaMaxTrainInstances",        500000)
+    sub(pg, "diaMaxFragmentCharge",        3)
+    sub(pg, "diaAdaptiveMlScoring",        "False")
+    sub(pg, "diaDynamicScoringMaxInstances", 25000)
+    sub(pg, "diaMaxPrecursorMz",           0)
+    sub(pg, "diaHardRtFilter",             "True")
+    sub(pg, "diaHardCcsFilter",            "True")
+    sub(pg, "diaConvertLibraryCharge2Fragments", "False")
+    sub(pg, "diaChargeNormalizationLibrary",     "True")
+    sub(pg, "diaChargeNormalizationSample",      "True")
+    sub(pg, "diaDeleteIntermediateResults",      "True")
+    sub(pg, "diaDeleteRawFilesAfterSearch",      "False")
+    sub(pg, "diaScoreWeightScanIndex",     -1)
+    sub(pg, "diaScoreWeightScanValue",     1)
+    sub(pg, "diaNumNonleadingMatches",     1)
+    sub(pg, "diaFragmentModelType",        0)
+    sub(pg, "diaAltFragmentModelPath",     "")
+    sub(pg, "diaUseDefaultRtModel",        "True")
+    sub(pg, "diaAltRtModelPath",           "")
+    sub(pg, "diaUseDefaultCcsModel",       "True")
+    sub(pg, "diaAltCcsModelPath",          "")
+    sub(pg, "diaBatchProcessing",          "True")
+    sub(pg, "diaBatchSize",                0)
+    sub(pg, "diaDecoyMode",                0)
+    sub(pg, "diaFirstBatch",               -1)
+    sub(pg, "diaLastBatch",                -1)
+    sub(pg, "diaOnlyPreprocess",           "False")
+    sub(pg, "diaMultiplexQuantMethod",     1)
+    sub(pg, "diaOnlyPostprocess",          "False")
+    sub(pg, "diaSkipLibraryGeneration",    "False")
+    sub(pg, "diaRequirePrecursor",         "False")
+    sub(pg, "diaFuturePeptides",           "False")
+    sub(pg, "diaOverrideRtWithPrediction", "False")
+    sub(pg, "diaMaxModifications",         2)
+    sub(pg, "diaMaxPositionings",          20)
+    sub(pg, "diaPredictCharges",           "False")
+    sub(pg, "diaUseProbScore",             "True")
+    sub(pg, "diaProbScoreP",               0.055)
+    sub(pg, "diaProbScoreG",               0.5)
+    sub(pg, "diaProbScoreStep",            0.1)
+    sub(pg, "isM2FragTypeOverride",        "False")
+    sub(pg, "ms2FragTypeOverride",         0)
+    sub(pg, "classicLfqForSingleShots",    "True")
+    sub(pg, "subsamplePeptidesForLfqNorm", "True")
+    sub(pg, "lfqSubsampleNormConstant",    400)
+    sub(pg, "sequenceBasedModifier",       "False")
+    sub(pg, "diaRtFromSamplesForExport",   "True")
+    sub(pg, "diaCcsFromSamplesForExport",  "True")
+    sub(pg, "diaLibraryExport",            0)
+    sub(pg, "diaUseApexWeightsForPtmLoc",  "False")
+    sub(pg, "diaSecondScoreForMultiplex",   "True")
+    sub(pg, "diaBestPrecursorChargeForQuant",      "False")
+    sub(pg, "diaBestPrecursorMassRangeForQuant",   "False")
+    sub(pg, "diaBestPrecursorIntensityForQuant",   "False")
+    sub(pg, "diaPtmLocMethod",             1)
+    sub(pg, "diaSecondScoring",            "True")
+    sub(pg, "diaIndexedSearch",            "True")
+    sub(pg, "diaIncreaseSequenceCoverage", "True")
+    sub(pg, "diaSequenceCoverageFdr",      0.01)
+    sub(pg, "diaHasIntensitiesForMl",      "True")
+    sub(pg, "diaFdrCvIncludeCharge",       "True")
+    sub(pg, "diaMinCharge",                1)
+    sub(pg, "diaMaxCharge",                4)
+    sub(pg, "diaDeltaMzLower",             0.55)
+    sub(pg, "diaDeltaMzUpper",             0.05)
+    sub(pg, "diaUseNeutralLossesForQuant", "True")
+    sub(pg, "diaSecondBestCorrelationThreshold", 0)
+    sub(pg, "diaUseSecondMatchAsDecoy",    "False")
+    sub(pg, "mobilityPredictionTwoConformations", "False")
+    sub(pg, "diaHasLibrarySupplement",     "False")
+    sub(pg, "diaSupplementalFile",         "")
+    sub(pg, "diaSupplementalEvidenceFile", "")
+    sub(pg, "diaNeuralNetNumIter",         0)
+    sub(pg, "diaNeuralNetDropout",         0)
+    sub(pg, "diaNeuralNetHiddenLayers",    0)
+    sub(pg, "diaNeuralNetBatchSize",       0)
+    sub(pg, "diaUseRnnRtModel",            "True")
+    sub(pg, "diaUseRnnCcsModel",           "False")
+    sub(pg, "diaUseCharge2Fragments",      "True")
+    sub(pg, "diaUseWaterLosses",           "False")
+    sub(pg, "diaUseAmmoniaLosses",         "False")
+    sub(pg, "diaUseRtFeaturesInMlScoring", "True")
+    sub(pg, "diaCountSamples",             "False")
+    sub(pg, "diaCountSamplesSecondScore",  "True")
+    sub(pg, "diaCountSamplesUpperPercentile",    50)
+    sub(pg, "diaCountSamplesNumLowerPercentiles", 5)
+    sub(pg, "diaSeparateCalibrationPerLib","False")
+
+    # ── MSMS PARAMS ARRAY ─────────────────────────────────────────────────────
+    msms_arr = sub(root, "msmsParamsArray")
+
+    _msms_configs = [
+        # (Name,      MatchTol, MatchPpm,  DeisoTol, DeisoPpm,  DeNovoTol, DeNovoPpm, Deiso,   Topx)
+        ("FTMS",     20,    "True",  7,     "True",  25,   "True",  "True",  12),
+        ("ITMS",     0.5,   "False", 0.15,  "False", 0.5,  "False", "False", 8),
+        ("TOF",      25,    "True",  0.01,  "False", 25,   "True",  "True",  16),
+        ("ASTRAL",   25,    "True",  0.01,  "False", 25,   "True",  "True",  16),
+        ("UNKNOWN",  20,    "True",  7,     "True",  25,   "True",  "True",  12),
+    ]
+    for (name, match_tol, match_ppm, deiso_tol, deiso_ppm,
+         denovo_tol, denovo_ppm, deiso, topx) in _msms_configs:
+        mp = sub(msms_arr, "msmsParams")
+        sub(mp, "Name",                    name)
+        sub(mp, "MatchTolerance",          match_tol)
+        sub(mp, "MatchToleranceInPpm",     match_ppm)
+        sub(mp, "DeisotopeTolerance",      deiso_tol)
+        sub(mp, "DeisotopeToleranceInPpm", deiso_ppm)
+        sub(mp, "DeNovoTolerance",         denovo_tol)
+        sub(mp, "DeNovoToleranceInPpm",    denovo_ppm)
+        sub(mp, "Deisotope",               deiso)
+        sub(mp, "Topx",                    topx)
+        sub(mp, "TopxInterval",            100)
+        sub(mp, "HigherCharges",           "True")
+        sub(mp, "IncludeWater",            "True")
+        sub(mp, "IncludeAmmonia",          "True")
+        sub(mp, "IncludeWaterCross",       "False")
+        sub(mp, "IncludeAmmoniaCross",     "False")
+        sub(mp, "DependentLosses",         "True")
+        sub(mp, "Recalibration",           "False")
+
+    # ── FRAGMENTATION PARAMS ARRAY ────────────────────────────────────────────
+    frag_arr = sub(root, "fragmentationParamsArray")
+    for frag_name in ("CID", "HCD", "ETD", "PQD", "ETHCD", "ETCID", "UVPD", "Unknown"):
+        fp = sub(frag_arr, "fragmentationParams")
+        sub(fp, "Name",                     frag_name)
+        sub(fp, "UseIntensityPrediction",   "False")
+        sub(fp, "UseSequenceBasedModifier", "False")
+        sub(fp, "InternalFragments",        "False")
+        sub(fp, "InternalFragmentWeight",   1)
+        sub(fp, "InternalFragmentAas",      "KRH")
 
     return root
 
@@ -291,7 +650,7 @@ def main():
     parser.add_argument("--raw-dir", required=True,
                         help="Directory containing RAW files")
     parser.add_argument("--fasta-dir", required=True,
-                        help="Directory containing per-plex FASTAs")
+                        help="Directory with per-plex FASTAs (from combine_fastas.py)")
     parser.add_argument("-o", "--output", required=True,
                         help="Output directory for MQ_SEARCH setup")
     parser.add_argument("--threads", type=int, default=16,
@@ -304,7 +663,7 @@ def main():
         if not os.path.exists(path):
             sys.exit(f"Error: {label} not found: {path}")
 
-    mqpar_dir  = os.path.join(args.output, "mqpar")
+    mqpar_dir      = os.path.join(args.output, "mqpar")
     plex_list_path = os.path.join(args.output, "plex_list.txt")
     os.makedirs(mqpar_dir, exist_ok=True)
 
@@ -342,11 +701,10 @@ def main():
         out_dir = os.path.join(args.output, "results", plex_id)
         os.makedirs(out_dir, exist_ok=True)
 
-        # Create symlinks for RAW files inside out_dir.
-        # MaxQuant determines combined/ location from where the RAW files live
-        # (it creates combined/ as a subdirectory of the RAW parent dir).
-        # Symlinking RAW files into out_dir makes MaxQuant place
-        # combined/ at MQ_SEARCH/results/{plex_id}/combined/ as desired.
+        # Symlink RAW files into results/{plex_id}/.
+        # MaxQuant places combined/ in the parent directory of the RAW files,
+        # so symlinking here causes combined/ to appear at
+        # MQ_SEARCH/results/{plex_id}/combined/ as desired.
         linked_raws = []
         for raw in found_raws:
             raw_name = os.path.basename(raw)
