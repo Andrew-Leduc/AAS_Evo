@@ -92,6 +92,9 @@ echo "  output:         $OUTDIR/combined/"
 echo "  threads:        ${SLURM_CPUS_PER_TASK}"
 echo ""
 
+# cd into the output directory so MaxQuant's subprocess creates combined/ here
+# (MaxQuantTask ignores fixedCombinedFolder and defaults to CWD)
+cd "$OUTDIR"
 dotnet "$MAXQUANT_EXE" "$MQPAR"
 
 echo ""
