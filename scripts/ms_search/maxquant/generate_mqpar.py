@@ -701,16 +701,19 @@ def main():
         out_dir = os.path.join(args.output, "results", plex_id)
         os.makedirs(out_dir, exist_ok=True)
 
-        # Symlink RAW files into results/{plex_id}/.
+        # Hardlink RAW files into results/{plex_id}/.
         # MaxQuant places combined/ in the parent directory of the RAW files,
-        # so symlinking here causes combined/ to appear at
+        # so hardlinking here causes combined/ to appear at
         # MQ_SEARCH/results/{plex_id}/combined/ as desired.
+        # Hardlinks (not symlinks) are used because MaxQuant's Thermo RAW reader
+        # silently reads 0 scans when given symlink paths on Linux.
+        # Note: hardlinks require RAW/ and MQ_SEARCH/ to be on the same filesystem.
         linked_raws = []
         for raw in found_raws:
             raw_name = os.path.basename(raw)
             link = os.path.join(out_dir, raw_name)
-            if not os.path.islink(link) and not os.path.exists(link):
-                os.symlink(raw, link)
+            if not os.path.exists(link):
+                os.link(raw, link)
             linked_raws.append(link)
 
         root = build_mqpar(
