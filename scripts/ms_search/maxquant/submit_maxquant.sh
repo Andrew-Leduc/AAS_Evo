@@ -97,7 +97,7 @@ echo ""
 # MaxQuant silently reads 0 MS scans from all RAW files.
 export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 
-# RAW files are symlinked into $OUTDIR by generate_mqpar.py, so MaxQuant
+# RAW files are hardlinked into $OUTDIR by generate_mqpar.py, so MaxQuant
 # creates combined/ at $OUTDIR/combined/ automatically.
 dotnet "$MAXQUANT_EXE" "$MQPAR"
 

@@ -135,7 +135,7 @@ def find_tryptic_cleavage_sites(sequence):
     return sites
 
 
-def get_reference_peptides(sequence, max_missed_cleavages=1):
+def get_reference_peptides(sequence, max_missed_cleavages=0):
     """
     Get all tryptic peptides from a reference protein sequence.
 
@@ -160,7 +160,7 @@ def get_reference_peptides(sequence, max_missed_cleavages=1):
     return peptides
 
 
-def extract_tryptic_peptides(sequence, mutation_pos, max_missed_cleavages=1):
+def extract_tryptic_peptides(sequence, mutation_pos, max_missed_cleavages=0):
     """
     Extract tryptic peptide(s) containing a mutation position.
 
@@ -367,7 +367,7 @@ def process_sample(tsv_path, gene_to_protein, out_dir, min_vaf, max_gnomad_af,
             mutant_seq = ref_seq[:pos - 1] + alt_aa + ref_seq[pos:]
 
             # Extract tryptic peptide(s) containing the mutation
-            peptides = extract_tryptic_peptides(mutant_seq, pos, max_missed_cleavages=1)
+            peptides = extract_tryptic_peptides(mutant_seq, pos, max_missed_cleavages=0)
 
             if not peptides:
                 log_entries.append(("NO_PEPTIDE", symbol,

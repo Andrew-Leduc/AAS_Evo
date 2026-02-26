@@ -118,7 +118,7 @@ def find_tryptic_cleavage_sites(sequence):
     return sites
 
 
-def extract_tryptic_peptides(sequence, mutation_positions, max_missed_cleavages=1):
+def extract_tryptic_peptides(sequence, mutation_positions, max_missed_cleavages=0):
     """
     Extract tryptic peptide(s) containing any of the mutation positions.
 
@@ -408,7 +408,7 @@ def main():
                 peptides = extract_tryptic_peptides(
                     mutant_seq,
                     [orig_pos, comp_pos],
-                    max_missed_cleavages=1
+                    max_missed_cleavages=0
                 )
 
                 if not peptides:
