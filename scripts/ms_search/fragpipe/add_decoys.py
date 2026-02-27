@@ -2,69 +2,63 @@
 """
 add_decoys.py
 
-Append reversed decoy sequences to per-plex FASTA files.
+Copy per-plex FASTA files to an output directory with reversed decoy sequences
+appended. FragPipe requires decoy sequences (prefix 'rev_') in the search
+database for target-decoy FDR estimation.
 
-FragPipe requires decoy sequences (prefix 'rev_') in the search database for
-target-decoy FDR estimation. This script appends reversed versions of all
-entries to any per-plex FASTA that does not already contain decoys.
+By default writes to --output-dir (per_plex_fragpipe/), leaving the source
+per_plex/ FASTAs untouched so MaxQuant (which handles decoys internally) can
+use them without modification.
 
 Usage:
-    python3 add_decoys.py --fasta-dir /path/to/FASTA/per_plex/
+    python3 add_decoys.py \
+        --fasta-dir /path/to/FASTA/per_plex/ \
+        --output-dir /path/to/FASTA/per_plex_fragpipe/
 
 Options:
-    --fasta-dir   Directory containing per-plex .fasta files (required)
-    --prefix      Decoy header prefix (default: rev_)
-    --force       Re-add decoys even if already present
+    --fasta-dir    Source directory with per-plex .fasta files (required)
+    --output-dir   Destination directory for FASTAs with decoys (required)
+    --prefix       Decoy header prefix (default: rev_)
+    --force        Overwrite output files even if already present
 """
 
 import argparse
 import os
+import shutil
 import sys
 
 
-def has_decoys(path, prefix):
-    """Return True if the file already contains decoy entries."""
-    decoy_header = f">{prefix}"
-    with open(path) as f:
-        for line in f:
-            if line.startswith(decoy_header):
-                return True
-    return False
-
-
-def add_decoys(path, prefix, force=False):
+def write_with_decoys(src_path, dst_path, prefix, force=False):
     """
-    Append reversed decoy entries to a FASTA file in place.
+    Copy src_path to dst_path and append reversed decoy entries.
 
-    Streams entries one at a time to avoid loading the full file into memory.
-    Returns True if decoys were added, False if skipped.
+    If dst_path already exists and force=False, skips the file.
+    Returns True if written, False if skipped.
     """
-    if not force and has_decoys(path, prefix):
+    if not force and os.path.exists(dst_path):
         return False
 
-    # Record file size before appending — reading and appending the same file
-    # simultaneously would cause f_in to read newly written decoy lines,
-    # creating an infinite loop.
-    original_size = os.path.getsize(path)
-
-    with open(path, "r") as f_in, open(path, "a") as f_out:
+    # Stream through source, writing targets then decoys to destination.
+    with open(src_path, "r") as f_in, open(dst_path, "w") as f_out:
+        entries = []
         header, seq_parts = None, []
-        while True:
-            if f_in.tell() >= original_size:
-                break
-            line = f_in.readline()
-            if not line:
-                break
+        for line in f_in:
             line = line.rstrip()
             if line.startswith(">"):
                 if header is not None:
-                    seq = "".join(seq_parts)
-                    f_out.write(f">{prefix}{header[1:]}\n{seq[::-1]}\n")
+                    entries.append((header, "".join(seq_parts)))
                 header, seq_parts = line, []
             else:
                 seq_parts.append(line)
         if header is not None:
-            seq = "".join(seq_parts)
+            entries.append((header, "".join(seq_parts)))
+
+        # Write all target entries first
+        for header, seq in entries:
+            f_out.write(f"{header}\n{seq}\n")
+
+        # Append reversed decoy entries
+        for header, seq in entries:
             f_out.write(f">{prefix}{header[1:]}\n{seq[::-1]}\n")
 
     return True
@@ -72,37 +66,43 @@ def add_decoys(path, prefix, force=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Append reversed decoy sequences to per-plex FASTA files."
+        description="Copy per-plex FASTAs to a new directory with reversed decoys appended."
     )
     parser.add_argument("--fasta-dir", required=True,
-                        help="Directory containing per-plex .fasta files")
+                        help="Source directory containing per-plex .fasta files")
+    parser.add_argument("--output-dir", required=True,
+                        help="Destination directory for FASTAs with decoys")
     parser.add_argument("--prefix", default="rev_",
                         help="Decoy header prefix (default: rev_)")
     parser.add_argument("--force", action="store_true",
-                        help="Re-add decoys even if already present")
+                        help="Overwrite output files even if already present")
 
     args = parser.parse_args()
 
     if not os.path.isdir(args.fasta_dir):
         sys.exit(f"Error: FASTA directory not found: {args.fasta_dir}")
 
-    fastas = sorted(f for f in os.listdir(args.fasta_dir)
-                    if f.endswith(".fasta"))
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    fastas = sorted(f for f in os.listdir(args.fasta_dir) if f.endswith(".fasta"))
     if not fastas:
         sys.exit(f"Error: No .fasta files found in {args.fasta_dir}")
 
-    print(f"Adding decoys (prefix='{args.prefix}') to {len(fastas)} FASTAs...")
+    print(f"Writing FASTAs with decoys (prefix='{args.prefix}')...")
+    print(f"  Source:      {args.fasta_dir}")
+    print(f"  Destination: {args.output_dir}")
 
-    added, skipped = 0, 0
+    written, skipped = 0, 0
     for fname in fastas:
-        path = os.path.join(args.fasta_dir, fname)
-        if add_decoys(path, args.prefix, force=args.force):
-            added += 1
+        src = os.path.join(args.fasta_dir, fname)
+        dst = os.path.join(args.output_dir, fname)
+        if write_with_decoys(src, dst, args.prefix, force=args.force):
+            written += 1
         else:
             skipped += 1
 
-    print(f"  Added decoys: {added}")
-    print(f"  Already had decoys (skipped): {skipped}")
+    print(f"  Written: {written}")
+    print(f"  Skipped (already exist, use --force to overwrite): {skipped}")
 
 
 if __name__ == "__main__":

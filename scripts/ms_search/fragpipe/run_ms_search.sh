@@ -3,8 +3,9 @@
 # Set up and submit FragPipe MS searches for all TMT plexes.
 #
 # Steps:
-#   1. Generate per-plex manifests from TMT mapping
-#   2. Add reversed decoy sequences to per-plex FASTAs (required for FDR)
+#   1. Copy per-plex FASTAs to per_plex_fragpipe/ with rev_ decoys appended
+#      (leaves per_plex/ untouched for MaxQuant, which adds decoys internally)
+#   2. Generate per-plex manifests from TMT mapping
 #   3. Submit SLURM array job to run FragPipe per plex
 #
 # Prerequisites:
@@ -32,7 +33,8 @@ META_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo/metadata"
 DATA_DIR="/scratch/leduc.an/AAS_Evo"
 
 RAW_DIR="${DATA_DIR}/RAW"
-FASTA_DIR="${DATA_DIR}/FASTA/per_plex"
+FASTA_SRC_DIR="${DATA_DIR}/FASTA/per_plex"          # source (no decoys, used by MaxQuant)
+FASTA_DIR="${DATA_DIR}/FASTA/per_plex_fragpipe"     # FragPipe copy (with rev_ decoys)
 TMT_MAP="${META_DIR}/PDC_meta/pdc_file_tmt_map.tsv"
 SEARCH_DIR="${DATA_DIR}/MS_SEARCH"
 # ---------------------------
@@ -54,15 +56,22 @@ for f in "$TMT_MAP"; do
     fi
 done
 
-for d in "$RAW_DIR" "$FASTA_DIR"; do
+for d in "$RAW_DIR" "$FASTA_SRC_DIR"; do
     if [[ ! -d "$d" ]]; then
         echo "ERROR: Required directory not found: $d"
         exit 1
     fi
 done
 
-# Step 1: Generate manifests
-echo "[$(date)] Generating FragPipe manifests..."
+# Step 1: Copy per-plex FASTAs to per_plex_fragpipe/ with rev_ decoys appended
+echo "[$(date)] Step 1: Building per_plex_fragpipe/ with decoys..."
+python3 "${SCRIPTS_DIR}/add_decoys.py" \
+    --fasta-dir "$FASTA_SRC_DIR" \
+    --output-dir "$FASTA_DIR"
+echo ""
+
+# Step 2: Generate manifests
+echo "[$(date)] Step 2: Generating FragPipe manifests..."
 
 WORKFLOW_FLAG=""
 if [[ -n "$WORKFLOW_TEMPLATE" ]]; then
@@ -80,11 +89,6 @@ python3 "${SCRIPTS_DIR}/generate_manifests.py" \
     $WORKFLOW_FLAG \
     -o "$SEARCH_DIR"
 
-echo ""
-
-# Step 2: Add decoys to per-plex FASTAs
-echo "[$(date)] Adding decoys to per-plex FASTAs..."
-python3 "${SCRIPTS_DIR}/add_decoys.py" --fasta-dir "$FASTA_DIR"
 echo ""
 
 # Check plex list
