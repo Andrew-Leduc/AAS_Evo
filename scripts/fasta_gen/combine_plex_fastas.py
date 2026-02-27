@@ -299,7 +299,21 @@ def main():
                 if uuid_pairs:
                     cases_with_gdc += 1
 
-                for uuid, gdc_sample_type in uuid_pairs:
+                # Filter to the GDC BAM whose sample_type matches the PDC
+                # TMT channel sample_type. Without this, a patient with both
+                # tumor and normal BAMs processed would contribute mutations
+                # from both FASTAs to whichever TMT channel they occupy,
+                # mixing germline (normal BAM) mutations into the tumor channel.
+                matched_uuid_pairs = [
+                    (uuid, gdc_st) for uuid, gdc_st in uuid_pairs
+                    if gdc_st.lower() == pdc_sample_type.lower()
+                ]
+                # Fall back to all available UUIDs only if no sample_type match
+                # (e.g. normalization inconsistency between PDC and GDC metadata)
+                if not matched_uuid_pairs:
+                    matched_uuid_pairs = uuid_pairs
+
+                for uuid, gdc_sample_type in matched_uuid_pairs:
                     if uuid not in available_fastas:
                         continue
 
