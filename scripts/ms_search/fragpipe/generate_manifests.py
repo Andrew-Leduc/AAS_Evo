@@ -133,25 +133,42 @@ def write_annotation(channel_map, plex_id, out_path):
 
 def patch_workflow(template_path, fasta_path, out_path):
     """
-    Copy workflow template with the database path replaced.
+    Copy workflow template with per-plex fields patched for proteogenomics.
 
-    FragPipe workflow files use 'database.db-path=...' for the FASTA path.
+    Patches applied:
+      - database.db-path: per-plex custom FASTA path
+      - tmtintegrator.channel_num: forced to TMT-11 (captures 131C channel)
+      - phi-report.filter: protein FDR raised to 1.0 so single-peptide mutant
+        entries are not penalised by ProteinProphet's parsimony model
     """
     with open(template_path) as f:
         content = f.read()
 
-    # Replace or add database path
-    new_line = f"database.db-path={fasta_path}"
-    new_content = re.sub(
-        r"^database\.db-path=.*$",
-        new_line,
-        content,
-        flags=re.MULTILINE,
-    )
-    if new_content == content:
-        # Key didn't exist in template — append it
-        new_content = content.rstrip("\n") + f"\n{new_line}\n"
-    content = new_content
+    # Each entry: (key_regex, full_replacement_line, fallback_value_if_missing)
+    patches = [
+        (
+            r"^database\.db-path=.*$",
+            f"database.db-path={fasta_path}",
+            f"database.db-path={fasta_path}",
+        ),
+        (
+            r"^tmtintegrator\.channel_num=.*$",
+            "tmtintegrator.channel_num=TMT-11",
+            "tmtintegrator.channel_num=TMT-11",
+        ),
+        (
+            r"^phi-report\.filter=.*$",
+            "phi-report.filter=--sequential --picked --prot 1.0",
+            "phi-report.filter=--sequential --picked --prot 1.0",
+        ),
+    ]
+
+    for key_pattern, replacement, fallback in patches:
+        new_content = re.sub(key_pattern, replacement, content, flags=re.MULTILINE)
+        if new_content == content:
+            # Key not present in template — append it
+            new_content = content.rstrip("\n") + f"\n{fallback}\n"
+        content = new_content
 
     with open(out_path, "w") as f:
         f.write(content)
