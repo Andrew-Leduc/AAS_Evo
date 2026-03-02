@@ -55,9 +55,12 @@ AAS_Evo/
 │   │   ├── submit_compensatory_fastas.sh
 │   │   └── submit_proteogenomics.sh
 │   └── ms_search/                       # FragPipe MS database search
-│       ├── generate_manifests.py
-│       ├── submit_fragpipe.sh
-│       └── run_ms_search.sh
+│       └── fragpipe/
+│           ├── run_ms_search.sh         # Orchestrator: setup + submit SLURM array
+│           ├── generate_manifests.py    # Generate per-plex manifests + patch workflows
+│           ├── add_decoys.py            # Append rev_ decoy sequences to FASTAs
+│           ├── submit_fragpipe.sh       # SLURM array job (one plex per task)
+│           └── validation.ipynb        # Channel enrichment validation notebook
 └── .claude/
     └── CLAUDE.md                        # Detailed project context
 ```
@@ -261,18 +264,94 @@ Fields: `type|accession|gene|swap|source|patient|sample_type`
 
 ### 9. MS Database Search (FragPipe)
 
-```bash
-# Set up per-plex manifests and submit FragPipe searches
-bash scripts/ms_search/run_ms_search.sh /path/to/template.workflow
+FragPipe is the primary tool for the MS database search. Each TMT plex is searched independently against its own custom FASTA (reference + plex-specific mutant peptides + compensatory peptides).
 
-# Or generate manifests first, then configure workflow separately:
-bash scripts/ms_search/run_ms_search.sh
-# -> Place workflow at MS_SEARCH/fragpipe.workflow, then:
-NUM_PLEXES=$(wc -l < /scratch/leduc.an/AAS_Evo/MS_SEARCH/plex_list.txt)
-sbatch --array=1-${NUM_PLEXES}%5 scripts/ms_search/submit_fragpipe.sh
+#### FragPipe Installation
+
+FragPipe requires several components to be installed together. The pipeline was developed and validated with **FragPipe 24.0**.
+
+Required components (all managed via the FragPipe GUI on first install):
+- **FragPipe 24.0** — main orchestrator (`fragpipe-24.0/bin/fragpipe`)
+- **MSFragger** — database search engine (bundled with FragPipe)
+- **Philosopher** — statistical validation and reporting (bundled with FragPipe)
+- **IonQuant / TMT-Integrator** — TMT reporter ion quantification (bundled with FragPipe)
+- **Java 17** — required runtime (`jdk-17.0.18+8` used here; set `JAVA_HOME`)
+
+> **Note**: The exact versions of MSFragger, Philosopher, and IonQuant bundled with FragPipe 24.0 should be noted here — check the FragPipe GUI's Tools tab for what was actually used.
+
+Installation paths are configured in `submit_fragpipe.sh`:
+```bash
+FRAGPIPE_BIN=/home/leduc.an/bin/fragpipe-24.0/bin/fragpipe
+FRAGPIPE_TOOLS=/home/leduc.an/bin/fragpipe-24.0/tools
+JAVA_HOME=/home/leduc.an/bin/jdk-17.0.18+8
 ```
 
-Each plex is searched independently (different custom FASTA per plex). All fractions from a plex are grouped as one experiment. TMT channel annotations map channels to patient IDs.
+#### FASTA Database Structure
+
+FragPipe requires decoy sequences in the search database (target-decoy FDR estimation). The pipeline maintains two separate copies of the per-plex FASTAs:
+
+- `FASTA/per_plex/` — clean FASTAs, no decoys (used by MaxQuant if needed)
+- `FASTA/per_plex_fragpipe/` — FASTAs with reversed decoy entries appended (`rev_` prefix)
+
+`run_ms_search.sh` runs `add_decoys.py` automatically to generate the FragPipe copies. Decoys are full sequence reversals (not shuffled), prefixed with `rev_`. FragPipe detects decoys by this prefix.
+
+The FASTA contains three entry types:
+```
+sp|P04637|P53_HUMAN ...     # Reference UniProt entries (sp|/tr| prefix)
+>mut|P04637|TP53|R273H|genetic|C3L-00001|tumor   # Observed mutant tryptic peptides
+>comp|P04637|TP53|R273H_G245S|predicted|...      # Compensatory mutation peptides
+>rev_sp|P04637|...          # Reversed decoy (appended by add_decoys.py)
+```
+
+Mutant and compensatory entries are **single tryptic peptides** (~15 AA), not full proteins. This keeps database size manageable and improves FDR statistics for rare entries.
+
+#### Workflow Configuration
+
+The FragPipe workflow is a `.workflow` file exported from the FragPipe GUI. Key settings used:
+
+- **Search type**: TMT-11 closed search
+- **TMT channels**: 11-plex (126–131C); forced via `tmtintegrator.channel_num=TMT-11` patch in `generate_manifests.py`
+- **Decoy prefix**: `rev_` (must match what `add_decoys.py` uses)
+- **Protein FDR**: default template value (standard `--prot 0.05`)
+
+> **Note**: The specific search parameters in the workflow (precursor/fragment mass tolerances, variable modifications, enzyme, missed cleavages, etc.) are set in the `.workflow` file on the cluster. These should be documented here once confirmed — export the workflow from the FragPipe GUI and check the MSFragger section.
+
+To create the workflow:
+1. Open FragPipe GUI on a machine with the RAW files accessible (or use a test file)
+2. Load files → select TMT-11 experiment type
+3. Configure MSFragger search parameters for closed search
+4. Enable Philosopher (PeptideProphet, ProteinProphet) and TMT-Integrator
+5. **Export workflow** → save as `fragpipe.workflow`
+6. Copy to the cluster and pass to `run_ms_search.sh`
+
+#### Running the Search
+
+```bash
+# Step 1: Set up per-plex manifests + copy FASTAs with decoys + submit jobs
+bash scripts/ms_search/fragpipe/run_ms_search.sh /path/to/template.workflow
+
+# Or: generate manifests first, add workflow manually, then submit
+bash scripts/ms_search/fragpipe/run_ms_search.sh
+# -> place workflow at MS_SEARCH/fragpipe.workflow, then:
+NUM_PLEXES=$(wc -l < /scratch/leduc.an/AAS_Evo/MS_SEARCH/plex_list.txt)
+sbatch --array=1-${NUM_PLEXES}%5 scripts/ms_search/fragpipe/submit_fragpipe.sh
+```
+
+`run_ms_search.sh` does three things automatically:
+1. Copies per-plex FASTAs to `FASTA/per_plex_fragpipe/` with `rev_` decoys appended
+2. Generates per-plex `.fp-manifest` files and TMT channel annotation files
+3. Patches per-plex workflow files with the correct FASTA path and TMT-11 channel count
+
+Each SLURM job: 16 CPUs, 64 GB RAM, 24h time limit, 5 plexes concurrent.
+
+#### Output
+
+Results are written to `MS_SEARCH/results/{plex_id}/`. Key output files:
+- `{plex_id}_1/psm.tsv` — PSM-level results with TMT reporter intensities
+- `combined_protein.tsv` — protein-level summary (Philosopher)
+- `experiment_annotation.tsv` — TMT channel → patient ID mapping (copied from `annotations/`)
+
+Search completion is detected by the presence of `combined_protein.tsv`. Re-submitting the array job safely skips completed plexes.
 
 ## Reference Files
 
@@ -289,14 +368,21 @@ All reference files are downloaded and indexed by `scripts/setup/setup_seq_files
 
 ## Requirements
 
-- Python 3.8+, numpy
-- `gdc-client` (GDC Data Transfer Tool)
+**Genomics pipeline:**
+- Python 3.8+, pandas, numpy
+- `gdc-client` (GDC Data Transfer Tool, for controlled-access BAM downloads)
 - `samtools`, `bcftools` (variant calling)
-- Ensembl VEP via Apptainer (annotation + AlphaMissense plugin)
-- `bedtools` (for generating CDS BED, if needed)
-- `mmseqs2` (MSA generation)
+- `bedtools` (for generating CDS BED from GENCODE annotation)
 - `htslib` / `tabix` (AlphaMissense indexing)
-- FragPipe (MS database search)
+- Ensembl VEP via Apptainer container (annotation + AlphaMissense plugin)
+
+**Coevolution pipeline:**
+- `mmseqs2` (MSA generation against UniRef50)
+
+**MS search pipeline:**
+- FragPipe 24.0 with bundled MSFragger, Philosopher, and IonQuant/TMT-Integrator
+- Java 17 (required by FragPipe/MSFragger)
+- Workflow file configured for TMT-11 closed search (exported from FragPipe GUI)
 
 ## Data Sources
 

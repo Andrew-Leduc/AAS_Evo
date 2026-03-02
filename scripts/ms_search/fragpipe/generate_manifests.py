@@ -138,8 +138,6 @@ def patch_workflow(template_path, fasta_path, out_path):
     Patches applied:
       - database.db-path: per-plex custom FASTA path
       - tmtintegrator.channel_num: forced to TMT-11 (captures 131C channel)
-      - phi-report.filter: protein FDR raised to 1.0 so single-peptide mutant
-        entries are not penalised by ProteinProphet's parsimony model
     """
     with open(template_path) as f:
         content = f.read()
@@ -155,11 +153,6 @@ def patch_workflow(template_path, fasta_path, out_path):
             r"^tmtintegrator\.channel_num=.*$",
             "tmtintegrator.channel_num=TMT-11",
             "tmtintegrator.channel_num=TMT-11",
-        ),
-        (
-            r"^phi-report\.filter=.*$",
-            "phi-report.filter=--sequential --picked --prot 1.0",
-            "phi-report.filter=--sequential --picked --prot 1.0",
         ),
     ]
 
