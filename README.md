@@ -249,18 +249,21 @@ Creates custom MS search databases per TMT plex: reference proteome + plex-speci
 
 **Tryptic peptide approach**: Instead of adding full mutant proteins (~500 AA each), the pipeline extracts only tryptic peptides containing mutations (~15 AA avg). This minimizes database size and improves FDR statistics.
 
-**Header format**:
-```
-# Observed mutations (from VEP):
->mut|P04637|TP53|R273H|genetic|C3L-00001|tumor
-SVTCTYSPALNKMFCQLAK
+**FASTA headers** — two formats exist at different stages:
 
-# Predicted compensatory mutations (from coevolution):
->comp|P04637|TP53|R273H_G245S|predicted|C3L-00001|tumor
+Per-sample FASTAs (`FASTA/per_sample/`) use a simple internal format:
+```
+>mut|P04637|TP53|R273H|genetic
 SVTCTYSPALNKMFCQLAK
 ```
 
-Fields: `type|accession|gene|swap|source|patient|sample_type`
+Per-plex FASTAs (`FASTA/per_plex/`) are rebuilt by `combine_plex_fastas.py` into a Philosopher-compatible mock-UniProt format required for FragPipe:
+```
+>sp|P04637-R273H-A3F2|TP53-mut TP53 mutant R273H OS=Homo sapiens OX=9606 GN=TP53 PE=1 SV=1
+>sp|P04637-comp-R273H-G245S-A3F2|TP53-comp TP53 compensatory R273H_G245S OS=Homo sapiens OX=9606 GN=TP53 PE=1 SV=1
+```
+
+The accession field structure is `{UniProtID}-{swap}-{4-char-seq-hash}`. The hash disambiguates multiple tryptic peptides for the same mutation (different missed cleavage contexts). See the FASTA structure section below for why this format is required.
 
 ### 9. MS Database Search (FragPipe)
 
@@ -295,15 +298,27 @@ FragPipe requires decoy sequences in the search database (target-decoy FDR estim
 
 `run_ms_search.sh` runs `add_decoys.py` automatically to generate the FragPipe copies. Decoys are full sequence reversals (not shuffled), prefixed with `rev_`. FragPipe detects decoys by this prefix.
 
-The FASTA contains three entry types:
+The per-plex FASTA contains four entry types:
 ```
-sp|P04637|P53_HUMAN ...     # Reference UniProt entries (sp|/tr| prefix)
->mut|P04637|TP53|R273H|genetic|C3L-00001|tumor   # Observed mutant tryptic peptides
->comp|P04637|TP53|R273H_G245S|predicted|...      # Compensatory mutation peptides
->rev_sp|P04637|...          # Reversed decoy (appended by add_decoys.py)
+# Standard reference proteins (passed through from UniProt)
+>sp|P04637|P53_HUMAN Cellular tumor antigen p53 ... GN=TP53 PE=1 SV=4
+MEEPQSDPSVEPPLSQETFSDLWKLLPENNVLSPLPSQAMDDLMLSPDDIEQWFTEDP...
+
+# Observed mutant tryptic peptides (Philosopher-compatible mock-UniProt format)
+>sp|P04637-R273H-A3F2|TP53-mut TP53 mutant R273H OS=Homo sapiens OX=9606 GN=TP53 PE=1 SV=1
+SVTCTYSPALNKMFCQLAK
+
+# Compensatory mutation peptides
+>sp|P04637-comp-R273H-G245S-A3F2|TP53-comp TP53 compensatory R273H_G245S OS=Homo sapiens OX=9606 GN=TP53 PE=1 SV=1
+VVRCPHHERCSDSDGLAPPQHLIRVEGNLHAEYLDDQQFIFHSVVVPYEPPEVGSDCTTIHYNYMCNS
+
+# Reversed decoys (appended by add_decoys.py)
+>rev_sp|P04637|P53_HUMAN ...
 ```
 
-Mutant and compensatory entries are **single tryptic peptides** (~15 AA), not full proteins. This keeps database size manageable and improves FDR statistics for rare entries.
+**Why this specific header format:** Philosopher classifies FASTA entries by accession format during `philosopher database --annotate`. Entries with non-UniProt accessions (e.g. `MUT_P04637_R273H`) are classified as "generic" proteins and skipped — they never appear in `db.bin`, causing the filter step to crash with "protein not in database" errors. Using the real UniProt accession as the base (`P04637-R273H-HASH`) causes Philosopher to classify the entry as a UniProt variant, store it in `db.bin`, and handle it correctly throughout the pipeline. The `GN=` field is separately required by TMT-Integrator for gene-level intensity reports. Underscores in the accession field also break Philosopher's parser, which is why compensatory swap combos use dashes (`R273H-G245S`) not underscores in the accession field.
+
+Mutant and compensatory entries are **single tryptic peptides** (~15 AA avg), not full proteins. Any mutant peptide that is a substring of its parent reference protein is filtered out at this stage — MSFragger matches by sequence, so a shared substring would assign the PSM to the reference entry and cause Philosopher to crash looking up the mutant accession.
 
 #### Workflow Configuration
 
