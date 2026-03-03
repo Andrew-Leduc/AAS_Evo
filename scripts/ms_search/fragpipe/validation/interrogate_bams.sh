@@ -55,7 +55,8 @@ done
 mkdir -p "$OUT_DIR"
 
 # ── Load samtools ─────────────────────────────────────────────────────────────
-module load samtools 2>/dev/null || true   # no-op if already loaded or unavailable
+export PATH="/shared/EL9/explorer/samtools/1.21/bin:$PATH"
+echo "samtools: $(which samtools)  version: $(samtools --version | head -1)"
 
 # ── Merge mode ───────────────────────────────────────────────────────────────
 if [[ "$MERGE" -eq 1 ]]; then
