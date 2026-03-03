@@ -35,8 +35,7 @@ def download_from_manifest(manifest_path: str, token_path: str = None):
     print(f"Downloading to: {BAMS_DIR}")
     print(f"Command: {' '.join(cmd)}")
 
-    # Uncomment to execute
-    # subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True)
 
 def main():
     parser = argparse.ArgumentParser(description='Download GDC data')
@@ -49,6 +48,10 @@ def main():
     if not Path(args.manifest).exists():
         print(f"Error: Manifest file not found: {args.manifest}")
         sys.exit(1)
+
+    if args.dry_run:
+        print("(dry-run: skipping execution)")
+        return
 
     download_from_manifest(args.manifest, args.token)
 

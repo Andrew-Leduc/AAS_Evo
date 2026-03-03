@@ -266,12 +266,16 @@ def main():
      tail -n +2 {OUT_DIR}/missing_metadata.tsv \\
          >> metadata/GDC_meta/gdc_meta_matched.tsv
 
-  3. Run variant calling on downloaded BAMs:
-     find {DATA}/BAMS -name "*.bam" > {DATA}/bam_list_missing.txt
-     CHUNK_NAME=missing BAMS_LIST={DATA}/bam_list_missing.txt \\
-         bash scripts/proc_bams/run_pipeline.sh variant-call missing
+  3. Run variant calling + VEP (BAMs must be the only files in BAMS/):
+     bash scripts/proc_bams/run_pipeline.sh variant-call chunk_05
+     bash scripts/proc_bams/run_pipeline.sh vep chunk_05
 
-  4. Run VEP, then regenerate mutant FASTAs for new UUIDs.
+  4. Re-consolidate missense table and regenerate FASTAs:
+     bash scripts/proc_bams/consolidate_missense.sh
+     python3 scripts/fasta_gen/generate_mutant_fastas.py
+
+  5. Clean up BAMs:
+     rm -rf {DATA}/BAMS/*
 ╚══════════════════════════════════════════════════════╝
 """)
 
