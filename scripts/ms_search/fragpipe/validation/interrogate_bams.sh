@@ -54,6 +54,9 @@ done
 
 mkdir -p "$OUT_DIR"
 
+# ── Load samtools ─────────────────────────────────────────────────────────────
+module load samtools 2>/dev/null || true   # no-op if already loaded or unavailable
+
 # ── Merge mode ───────────────────────────────────────────────────────────────
 if [[ "$MERGE" -eq 1 ]]; then
     echo "Merging per-UUID output files..."
@@ -183,9 +186,6 @@ while IFS=$'\t' read -r -a COLS; do
         -q ${MIN_MAPQ} \
         -Q ${MIN_BQ} \
         -f "$REF" \
-        --no-output-ins \
-        --no-output-del \
-        --no-output-ends \
         "$BAM" 2>/dev/null || true)
 
     if [[ -z "$PILEUP" ]]; then
