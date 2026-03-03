@@ -176,12 +176,12 @@ while IFS=$'\t' read -r -a COLS; do
     HAVE_VAF="${COLS[$((COL_HVAF-1))]}"
     CHROM="${COLS[$((COL_CHROM-1))]}"
     POS="${COLS[$((COL_POS-1))]}"
-    REF="${COLS[$((COL_REF-1))]}"
-    ALT="${COLS[$((COL_ALT-1))]}"
+    REF_BASE="${COLS[$((COL_REF-1))]}"   # reference allele (e.g. "A") — NOT the genome path
+    ALT_BASE="${COLS[$((COL_ALT-1))]}"   # alt allele (e.g. "G")
 
-    echo "  Pileup: ${CHROM}:${POS} REF=${REF} ALT=${ALT} (${GENE} ${SWAP})"
+    echo "  Pileup: ${CHROM}:${POS} REF=${REF_BASE} ALT=${ALT_BASE} (${GENE} ${SWAP})"
 
-    # Run samtools mpileup at the exact position
+    # Run samtools mpileup at the exact position; $REF is the genome FASTA path
     PILEUP=$(samtools mpileup \
         -r "${CHROM}:${POS}-${POS}" \
         -q ${MIN_MAPQ} \
@@ -196,7 +196,7 @@ while IFS=$'\t' read -r -a COLS; do
             "$HAVE_UUID" "$HAVE_CASE" \
             "$GENE" "$ACC" "$SWAP" "$PEP" \
             "$RATIO" "$HAVE_VAF" \
-            "$CHROM" "$POS" "$REF" "$ALT" \
+            "$CHROM" "$POS" "$REF_BASE" "$ALT_BASE" \
             >> "$OUTFILE"
         continue
     fi
@@ -206,8 +206,8 @@ while IFS=$'\t' read -r -a COLS; do
     PILEUP_BASES=$(echo "$PILEUP" | awk '{print $5}')
 
     # Count ALT occurrences in bases string
-    ALT_UPPER="$ALT"
-    ALT_LOWER=$(echo "$ALT" | tr '[:upper:]' '[:lower:]')
+    ALT_UPPER="$ALT_BASE"
+    ALT_LOWER=$(echo "$ALT_BASE" | tr '[:upper:]' '[:lower:]')
     # Remove indel notation before counting
     BASES_CLEAN=$(echo "$PILEUP_BASES" | sed 's/[+-][0-9]\+[ACGTNacgtn]\+//g; s/\^.//g; s/\$//g; s/[*<>]//g')
     ALT_DEPTH=$(echo "$BASES_CLEAN" | tr -cd "${ALT_UPPER}${ALT_LOWER}" | wc -c)
@@ -224,7 +224,7 @@ while IFS=$'\t' read -r -a COLS; do
         "$HAVE_UUID" "$HAVE_CASE" \
         "$GENE" "$ACC" "$SWAP" "$PEP" \
         "$RATIO" "$HAVE_VAF" \
-        "$CHROM" "$POS" "$REF" "$ALT" \
+        "$CHROM" "$POS" "$REF_BASE" "$ALT_BASE" \
         "$TOTAL_DEPTH" "$ALT_DEPTH" "$ALT_VAF" \
         >> "$OUTFILE"
 
