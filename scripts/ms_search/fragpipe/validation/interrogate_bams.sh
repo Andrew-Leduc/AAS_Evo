@@ -140,7 +140,7 @@ echo "  Target positions for this UUID: $N_TARGETS"
 
 # ── Output file ──────────────────────────────────────────────────────────────
 OUTFILE="$OUT_DIR/bam_support_${TASK_ID}.tsv"
-printf '%s\n' "not_have_uuid\tnot_have_case\tnot_have_channel\thave_uuid\thave_case\tgene\taccession\tswap\tpeptide\tratio\thave_vaf\tCHROM\tPOS\tREF\tALT\ttotal_depth\talt_depth\talt_vaf" \
+printf 'not_have_uuid\tnot_have_case\tnot_have_channel\thave_uuid\thave_case\tgene\taccession\tswap\tpeptide\tratio\thave_vaf\tCHROM\tPOS\tREF\tALT\ttotal_depth\talt_depth\talt_vaf\n' \
     > "$OUTFILE"
 
 # ── Pileup and parse ─────────────────────────────────────────────────────────
