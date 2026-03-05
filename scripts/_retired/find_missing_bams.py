@@ -107,15 +107,26 @@ def extract_meta(hit: dict, case_id: str, sample_type: str) -> dict:
         samples[0] if samples else {}
     )
     proj = c.get("project", {})
+    # Column order matches gdc_meta_matched.tsv exactly:
+    # gdc_file_id, file_name, md5, size, state, case_submitter_id,
+    # sample_submitter_id, aliquot_submitter_id, sample_type, tissue_type,
+    # tissue_or_organ_of_origin, project_id, disease_type, primary_site, unifier_id
     return {
-        "file_id":           hit["file_id"],
-        "file_name":         hit.get("file_name", ""),
-        "case_submitter_id": case_id,
-        "sample_type":       sample_type,
-        "tissue_type":       sample.get("tissue_type", ""),
-        "primary_site":      proj.get("primary_site", ""),
-        "disease_type":      proj.get("disease_type", ""),
-        "project_id":        proj.get("project_id", ""),
+        "gdc_file_id":              hit["file_id"],
+        "file_name":                hit.get("file_name", ""),
+        "md5":                      hit.get("md5sum", ""),
+        "size":                     hit.get("file_size", ""),
+        "state":                    hit.get("state", ""),
+        "case_submitter_id":        case_id,
+        "sample_submitter_id":      "",
+        "aliquot_submitter_id":     "",
+        "sample_type":              sample_type,
+        "tissue_type":              sample.get("tissue_type", ""),
+        "tissue_or_organ_of_origin": "",
+        "project_id":               proj.get("project_id", ""),
+        "disease_type":             proj.get("disease_type", ""),
+        "primary_site":             proj.get("primary_site", ""),
+        "unifier_id":               "",
     }
 
 
