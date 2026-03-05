@@ -92,10 +92,15 @@ def load_gdc_meta(gdc_meta_path):
     with open(gdc_meta_path, newline="") as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
+            # Skip blank/malformed rows (e.g. trailing newlines after append)
+            if row.get("case_submitter_id") is None:
+                continue
             case_id = row["case_submitter_id"].strip()
+            if not case_id:
+                continue
             # Column may be "file_id" or "gdc_file_id" depending on metadata version
-            file_id = row.get("gdc_file_id", row.get("file_id", "")).strip()
-            sample_type = row.get("sample_type", "").strip()
+            file_id = (row.get("gdc_file_id") or row.get("file_id") or "").strip()
+            sample_type = (row.get("sample_type") or "").strip()
             case_to_uuids[case_id].append((file_id, sample_type))
             uuid_to_info[file_id] = {
                 "case_id": case_id,
