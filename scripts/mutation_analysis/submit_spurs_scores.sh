@@ -16,7 +16,7 @@ REF_FASTA="${DATA_DIR}/SEQ_FILES/uniprot_human_canonical.fasta"
 SPURS_OUT="${DATA_DIR}/SPURS"
 
 # This is the input you said the next step will use:
-GENE_LIST="${DATA_DIR}/ANALYSIS/gene_list_for_msa.txt"
+GENE_LIST="${DATA_DIR}/ANALYSIS/gene_list_for_spurs.txt"
 
 mkdir -p "${DATA_DIR}/logs" "${SPURS_OUT}"
 
@@ -25,7 +25,8 @@ module load anaconda3 2>/dev/null || true
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "${DATA_DIR}/conda_envs/spurs_env"
 
-python3 "$(cd "$(dirname "$0")" && pwd)/spurs_predict_per_gene.py" \
+SCRIPT_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo/scripts/mutation_analysis"
+python3 "${SCRIPT_DIR}/spurs_predict_per_gene.py" \
   --gene-list "${GENE_LIST}" \
   --gene-index "${SLURM_ARRAY_TASK_ID}" \
   --ref-fasta "${REF_FASTA}" \
