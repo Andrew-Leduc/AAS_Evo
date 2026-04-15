@@ -29,11 +29,17 @@ python -m pip install --no-cache-dir "pip==24.0" "setuptools<70" wheel
 python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
   torch==1.12.0+cpu torchvision==0.13.0+cpu torchaudio==0.12.0+cpu
 
-# SPURS deps + SPURS itself
+# SPURS deps
 python -m pip install --no-cache-dir omegaconf "hydra-core==1.2.0"
 python -m pip install --no-cache-dir "pytorch-lightning==1.7.3" "torchmetrics==0.11.4"
 python -m pip install --no-cache-dir "git+https://github.com/facebookresearch/esm.git"
-python -m pip install --no-cache-dir spurs
 
-python -c "import torch, spurs; print('OK torch', torch.__version__, '| spurs', spurs.__file__)"
+# SPURS itself — must install from GitHub clone (PyPI 'spurs' is a geospatial package)
+SPURS_REPO="${DATA_DIR}/SPURS_repo"
+if [[ ! -d "${SPURS_REPO}" ]]; then
+  git clone https://github.com/luo-group/SPURS.git "${SPURS_REPO}"
+fi
+python -m pip install --no-cache-dir -e "${SPURS_REPO}"
+
+python -c "from spurs.inference import get_SPURS_from_hub; import torch; print('OK torch', torch.__version__, '| spurs ok')"
 echo "DONE: ${ENV_DIR}"
