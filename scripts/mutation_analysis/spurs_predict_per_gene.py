@@ -46,7 +46,7 @@ def download_alphafold_pdb(uniprot_acc: str, out_pdb: Path, timeout: int = 60):
     if out_pdb.exists() and out_pdb.stat().st_size > 1000:
         return True
 
-    for v in (4, 3, 2, 1):
+    for v in (6, 5, 4, 3, 2, 1):
         url = f"https://alphafold.ebi.ac.uk/files/AF-{uniprot_acc}-F1-model_v{v}.pdb"
         try:
             with urllib.request.urlopen(url, timeout=timeout) as r:
