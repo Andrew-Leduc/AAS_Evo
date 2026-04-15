@@ -91,7 +91,12 @@ AAS_Evo/                              # This repo
 │   │   ├── generate_msas.py
 │   │   ├── submit_msa_generation.sh
 │   │   ├── coevolution_analysis.py
-│   │   └── submit_coevolution.sh
+│   │   ├── submit_coevolution.sh
+│   │   ├── build_msa_gene_list.py        # Map MSA entry names → UniProt accessions + gene symbols
+│   │   ├── spurs_predict_per_gene.py     # SPURS ddG stability predictions per gene
+│   │   ├── add_spurs_to_missense_table.py # Merge spurs_ddg into all_missense_mutations.tsv
+│   │   ├── setup_spurs_env.sh            # One-time conda env setup for SPURS
+│   │   └── submit_spurs_scores.sh        # SLURM array job for SPURS (one task per gene)
 │   └── ms_search/                        # FragPipe MS database search
 │       ├── generate_manifests.py
 │       ├── submit_fragpipe.sh
@@ -123,7 +128,10 @@ metadata/
 │   ├── pdc_all_files_matched.tsv     # Pruned to matched samples only
 │   ├── pdc_file_tmt_map.tsv          # File → TMT channel → sample mapping
 │   └── pdc_meta.tsv                  # Consolidated sample metadata
-└── mapping_report.tsv                # GDC↔PDC matching report
+├── mapping_report.tsv                # GDC↔PDC matching report
+├── MSA_have_list.txt                 # Entry names of MSAs already computed (e.g. 1433G_HUMAN_b03.a2m)
+├── MSA_have_list_mapped.tsv          # Generated: entry_name, accession, gene_symbol, msa_file
+└── gene_list_for_spurs.txt           # Generated: gene symbols for SPURS array job
 ```
 
 **Extensibility**: To add a new CPTAC tissue/study, add a row to `studies.tsv` and re-run `setup_metadata.sh`.
@@ -153,9 +161,15 @@ metadata/
 ├── ANALYSIS/                         # Mutation filtering & ranking output
 │   ├── ranked_mutations.tsv          # All mutations with composite scores
 │   ├── top_5000_mutations.tsv        # Top N subset
+│   ├── all_missense_with_spurs.tsv   # all_missense_mutations.tsv + spurs_ddg column
 │   ├── gene_list_for_msa.txt         # Unique genes from top N (used by MSA/coevolution)
+│   ├── gene_list_for_spurs.txt       # Gene symbols for SPURS array job (copied from metadata/)
 │   ├── mutation_burden.tsv           # Per-protein-per-patient counts
 │   └── ranking_summary.txt           # Statistics
+├── SPURS/                            # SPURS ddG stability predictions
+│   ├── pdb_cache/                    # AlphaFold PDB files (downloaded per gene)
+│   ├── ddg_matrices/                 # Per-gene ddG matrices ({ACC}.{GENE}.ddg_matrix.tsv)
+│   └── hf_cache/                     # HuggingFace model cache
 ├── FASTA/                            # Custom proteogenomics FASTAs
 │   ├── per_sample/                   # {uuid}_mutant.fasta (mutants only)
 │   ├── per_plex/                     # {run_metadata_id}.fasta (ref + mut + comp)
@@ -247,15 +261,36 @@ PDC RAW files (separate, not chunked):
 sbatch scripts/download/pdc/submit_download.sh
 ```
 
-### 6. Consolidate & Filter Mutations
+### 6. Consolidate Mutations & Run SPURS Stability Predictions
+
+**Pipeline order**: BAM → VCF → VEP → SPURS → filter → MSA → coevolution
+
 ```bash
 # After ALL BAM chunks are processed:
 bash scripts/proc_bams/consolidate_missense.sh
 # Output: /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv (18 columns)
 
-# Rank mutations by composite pathogenicity score
-python3 scripts/mutation_analysis/filter_and_rank.py \
+# One-time: set up SPURS conda env
+bash scripts/mutation_analysis/setup_spurs_env.sh
+
+# Copy gene list (derived from existing MSAs; 3190 genes) to ANALYSIS/
+cp metadata/gene_list_for_spurs.txt /scratch/leduc.an/AAS_Evo/ANALYSIS/gene_list_for_spurs.txt
+
+# Submit SPURS array job (max array size 1000 on Discovery, submit in batches)
+# Each task: downloads AlphaFold PDB → runs SPURS → saves L×20 ddG matrix
+sbatch --array=1-1000%20 scripts/mutation_analysis/submit_spurs_scores.sh
+# Submit remaining genes using GENE_OFFSET env var for batches beyond 1000
+
+# After all SPURS jobs complete, merge ddG scores into missense table
+python3 scripts/mutation_analysis/add_spurs_to_missense_table.py \
     --vep-tsv /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv \
+    --spurs-dir /scratch/leduc.an/AAS_Evo/SPURS \
+    -o /scratch/leduc.an/AAS_Evo/ANALYSIS/all_missense_with_spurs.tsv
+# Output: ANALYSIS/all_missense_with_spurs.tsv (adds spurs_ddg column)
+
+# Filter by pathogenicity (AlphaMissense) OR stability (SPURS ddG) for MSA gene list
+python3 scripts/mutation_analysis/filter_and_rank.py \
+    --vep-tsv /scratch/leduc.an/AAS_Evo/ANALYSIS/all_missense_with_spurs.tsv \
     --ref-fasta /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
     -o /scratch/leduc.an/AAS_Evo/ANALYSIS
 # Output: ANALYSIS/top_5000_mutations.tsv, ANALYSIS/gene_list_for_msa.txt
