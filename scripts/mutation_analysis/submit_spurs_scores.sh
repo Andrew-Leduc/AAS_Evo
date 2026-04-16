@@ -21,10 +21,12 @@ GENE_LIST="${DATA_DIR}/ANALYSIS/gene_list_for_spurs.txt"
 mkdir -p "${DATA_DIR}/logs" "${SPURS_OUT}"
 
 PYTHON="${DATA_DIR}/conda_envs/spurs_env/bin/python"
+GENE_OFFSET="${GENE_OFFSET:-0}"
+GENE_INDEX=$(( SLURM_ARRAY_TASK_ID + GENE_OFFSET ))
 
 SCRIPT_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo/scripts/mutation_analysis"
 "${PYTHON}" "${SCRIPT_DIR}/spurs_predict_per_gene.py" \
   --gene-list "${GENE_LIST}" \
-  --gene-index "${SLURM_ARRAY_TASK_ID}" \
+  --gene-index "${GENE_INDEX}" \
   --ref-fasta "${REF_FASTA}" \
   --out-dir "${SPURS_OUT}"
