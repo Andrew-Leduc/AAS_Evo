@@ -81,8 +81,8 @@ def main():
 
     # ── Load Tsour pep_to_protein: SAAP → ENSP ───────────────────────────────
     print("Loading pep_to_protein...", flush=True)
-    p2prot = pd.read_csv(args.pep_to_protein, index_col=0,
-                         usecols=[0, "SAAP", "name", "protein", "protein.position"])
+    p2prot = pd.read_csv(args.pep_to_protein,
+                         usecols=["SAAP", "name", "protein", "protein.position"])
     p2prot = p2prot[["SAAP", "name", "protein", "protein.position"]].drop_duplicates("SAAP")
     p2prot = p2prot.rename(columns={"name": "gene_symbol",
                                     "protein": "ensp_id",
