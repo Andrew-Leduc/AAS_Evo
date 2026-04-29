@@ -48,7 +48,7 @@ def parse_args():
     return ap.parse_args()
 
 
-def extract_pos(swap: str) -> int | None:
+def extract_pos(swap: str):
     """Extract 1-based position from swap string like 'R273H'."""
     if not isinstance(swap, str):
         return None
