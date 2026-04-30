@@ -16,7 +16,7 @@ REF_FASTA="${DATA_DIR}/SEQ_FILES/uniprot_human_canonical.fasta"
 SPURS_OUT="${DATA_DIR}/SPURS"
 
 # This is the input you said the next step will use:
-GENE_LIST="${DATA_DIR}/ANALYSIS/gene_list_for_spurs.txt"
+GENE_LIST="${DATA_DIR}/ANALYSIS/gene_list_for_spurs_all.txt"
 
 mkdir -p "${DATA_DIR}/logs" "${SPURS_OUT}"
 

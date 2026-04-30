@@ -58,13 +58,33 @@ def download_alphafold_pdb(uniprot_acc: str, out_pdb: Path, timeout: int = 60):
             continue
     return False
 
-def write_ddg_matrix_tsv(ddg_tensor, seq: str, out_tsv: Path):
+def extract_plddt(pdb_path: Path) -> list:
+    """Extract per-residue pLDDT from AlphaFold PDB B-factor column (one CA atom per residue)."""
+    plddt = []
+    seen = set()
+    with open(pdb_path) as f:
+        for line in f:
+            if not line.startswith("ATOM"):
+                continue
+            atom_name = line[12:16].strip()
+            if atom_name != "CA":
+                continue
+            res_num = int(line[22:26].strip())
+            if res_num in seen:
+                continue
+            seen.add(res_num)
+            plddt.append(float(line[60:66].strip()))
+    return plddt
+
+
+def write_ddg_matrix_tsv(ddg_tensor, seq: str, plddt: list, out_tsv: Path):
     out_tsv.parent.mkdir(parents=True, exist_ok=True)
     ddg = ddg_tensor.detach().cpu().numpy()
     with open(out_tsv, "w") as f:
-        f.write("pos_1based\twt_aa\t" + "\t".join([f"to_{aa}" for aa in ALPHABET]) + "\n")
+        f.write("pos_1based\twt_aa\tplddt\t" + "\t".join([f"to_{aa}" for aa in ALPHABET]) + "\n")
         for i, wt in enumerate(seq):
-            f.write(f"{i+1}\t{wt}\t" + "\t".join([f"{ddg[i, j]:.6f}" for j in range(20)]) + "\n")
+            pl = f"{plddt[i]:.2f}" if i < len(plddt) else "NA"
+            f.write(f"{i+1}\t{wt}\t{pl}\t" + "\t".join([f"{ddg[i, j]:.6f}" for j in range(20)]) + "\n")
 
 def main():
     ap = argparse.ArgumentParser()
@@ -122,15 +142,18 @@ def main():
         pdb = parse_pdb(str(pdb_path), pdb_name, args.chain, cfg)
         seq = pdb["seq"]
 
+        plddt = extract_plddt(pdb_path)
+
         with torch.no_grad():
             ddg = model(pdb, return_logist=True)  # (L,20)
 
         wt1 = seq[0]
         wt_idx = ALPHABET.find(wt1)
         wt_ddg = ddg[0, wt_idx].item() if wt_idx >= 0 else float("nan")
-        print(f"[RUN] {gene} ({acc}) L={len(seq)} wt1={wt1} ddg(wt1)={wt_ddg:.6f}")
+        mean_plddt = sum(plddt) / len(plddt) if plddt else float("nan")
+        print(f"[RUN] {gene} ({acc}) L={len(seq)} mean_plddt={mean_plddt:.1f} ddg(wt1)={wt_ddg:.6f}")
 
-        write_ddg_matrix_tsv(ddg, seq, out_tsv)
+        write_ddg_matrix_tsv(ddg, seq, plddt, out_tsv)
         print(f"[WROTE] {out_tsv}")
 
 if __name__ == "__main__":
