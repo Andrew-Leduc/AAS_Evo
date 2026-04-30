@@ -16,6 +16,9 @@ AAS_Evo/
 │   │   ├── {tissue}/PDC_file_manifest.csv
 │   │   ├── {tissue}/PDC_study_biospecimen.csv
 │   │   └── {tissue}/PDC_study_experimental.csv
+│   ├── Tsour_et_al/                     # External AAS dataset (Tsour et al.)
+│   │   ├── pep_to_protein.csv           # SAAP → protein/gene/position mapping
+│   │   └── peptide_to_patient.csv       # SAAP → patient/TMT set/RAAS
 │   └── mapping_report.tsv              # GDC↔PDC matching report
 ├── scripts/
 │   ├── setup/
@@ -42,12 +45,21 @@ AAS_Evo/
 │   │   ├── submit_variant_call.sh       # SLURM array: variant calling
 │   │   ├── submit_vep.sh               # SLURM array: VEP annotation + AlphaMissense
 │   │   └── consolidate_missense.sh      # Merge missense mutations
-│   ├── mutation_analysis/               # Filtering, MSA generation & coevolution
+│   ├── mutation_analysis/               # Filtering, SPURS, MSA generation & coevolution
 │   │   ├── filter_and_rank.py
+│   │   ├── spurs_predict_per_gene.py    # SPURS ddG stability predictions (+ pLDDT extraction)
+│   │   ├── submit_spurs_scores.sh       # SLURM array job for SPURS
+│   │   ├── add_spurs_to_missense_table.py  # Merge spurs_ddg into missense table
+│   │   ├── backfill_plddt.py            # Add pLDDT to existing ddg_matrix files from cached PDBs
+│   │   ├── make_unique_missense_table.py   # Collapse to one row per unique mutation + SPURS + pLDDT
 │   │   ├── generate_msas.py
 │   │   ├── submit_msa_generation.sh
+│   │   ├── build_msa_gene_list.py
 │   │   ├── coevolution_analysis.py
-│   │   └── submit_coevolution.sh
+│   │   ├── submit_coevolution.sh
+│   │   ├── saap_missense_cooccurrence.py   # SAAP × missense co-occurrence (per TMT set)
+│   │   ├── saap_cooccurrence_am_analysis.py # AM score distribution for co-occurring mutations
+│   │   └── saap_evcoupling_analysis.py     # SAAP × EVCouplings × missense coupling check
 │   ├── fasta_gen/                       # Custom proteogenomics FASTAs
 │   │   ├── generate_mutant_fastas.py
 │   │   ├── combine_plex_fastas.py
@@ -84,11 +96,27 @@ AAS_Evo/
 │   ├── uniprot_human_canonical.fasta  # UniProt reviewed proteome
 │   ├── uniref50       # MMseqs2 UniRef50 database
 │   └── AlphaMissense_hg38.tsv.gz     # AlphaMissense pathogenicity data
-├── ANALYSIS/          # Mutation filtering & ranking output
+├── ANALYSIS/          # Mutation filtering, ranking & SAAP analysis output
+│   ├── ranked_mutations.tsv
+│   ├── top_5000_mutations.tsv
+│   ├── all_missense_with_spurs.tsv        # Full per-sample missense + spurs_ddg
+│   ├── unique_missense_mutations.tsv      # One row per unique mutation + spurs_ddg + plddt
+│   ├── gene_list_for_msa.txt
+│   ├── gene_list_for_spurs_all.txt        # All missense-table genes not yet in SPURS
+│   └── saap_cooccurrence/                 # SAAP co-occurrence analysis outputs
+│       ├── saap_set_summary.tsv
+│       ├── saap_missense_cooccurrence.tsv
+│       ├── evc_coverage.tsv
+│       ├── evc_cooccurrence.tsv
+│       └── evc_summary.txt
 ├── FASTA/             # Custom proteogenomics FASTAs
 │   ├── per_sample/    # Per-sample mutant entries
 │   ├── per_plex/      # Reference + plex-specific mutants + compensatory
 │   └── compensatory/  # Predicted compensatory mutation entries
+├── SPURS/             # SPURS ddG stability predictions
+│   ├── pdb_cache/     # AlphaFold PDB files (cached per gene)
+│   ├── ddg_matrices/  # {ACC}.{GENE}.ddg_matrix.tsv (pos × 20 AA, with plddt column)
+│   └── hf_cache/      # HuggingFace model cache
 ├── MSA/               # Per-gene multiple sequence alignments (A3M)
 ├── COEVOL/            # Coevolution analysis output
 ├── MS_SEARCH/         # FragPipe MS search setup & results
@@ -104,6 +132,14 @@ AAS_Evo/
 Download BAMs → Variant Call → VEP (+ AlphaMissense) → Consolidate
     ↓                                                       ↓
     ↓                                           All Missense Mutations
+    ↓                                                       ↓
+    ↓                               SPURS ddG Predictions (per gene, + pLDDT)
+    ↓                                                       ↓
+    ↓                               Unique Missense Table (gene×swap, with scores)
+    ↓                                                       ↓
+    ↓                               SAAP Co-occurrence Analysis (Tsour et al.)
+    ↓                                   ↓                   ↓
+    ↓                            AM Score Analysis    EVCouplings Check
     ↓                                                       ↓
 Filter & Rank (top 5000)                      Per-Sample Mutant FASTAs
     ↓                                                       ↓
@@ -205,7 +241,79 @@ python3 scripts/mutation_analysis/filter_and_rank.py \
 
 Output: `ANALYSIS/top_5000_mutations.tsv`, `ANALYSIS/gene_list_for_msa.txt` (used automatically by downstream steps).
 
-### 5. MSA Generation
+### 5. SPURS Stability Predictions
+
+SPURS predicts per-position ddG (stability change) for all 20 amino acid substitutions using AlphaFold structures. The ddG matrix includes a `plddt` column (AlphaFold per-residue confidence, 0–100) for quality filtering — only trust ddG at positions with pLDDT > 70.
+
+```bash
+# One-time setup
+bash scripts/mutation_analysis/setup_spurs_env.sh
+
+# Generate gene list of all genes in missense table not yet computed
+awk -F'\t' 'NR>1 {print $7}' /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv \
+    | sort -u > /tmp/all_missense_genes.txt
+ls /scratch/leduc.an/AAS_Evo/SPURS/ddg_matrices/*.ddg_matrix.tsv \
+    | xargs -n1 basename | awk -F'.' '{print $2}' | sort -u > /tmp/done_genes.txt
+comm -23 /tmp/all_missense_genes.txt /tmp/done_genes.txt \
+    > /scratch/leduc.an/AAS_Evo/ANALYSIS/gene_list_for_spurs_all.txt
+
+# Submit in batches of 1000 (Discovery array limit)
+NUM=15621  # replace with actual wc -l output
+BATCH=1000
+for offset in $(seq 0 $BATCH $((NUM - 1))); do
+    remaining=$((NUM - offset))
+    size=$((remaining < BATCH ? remaining : BATCH))
+    GENE_OFFSET=$offset sbatch --array=1-${size}%20 \
+        scripts/mutation_analysis/submit_spurs_scores.sh
+done
+
+# Backfill pLDDT into existing ddg_matrix files (no model needed, reads cached PDBs)
+srun ... python scripts/mutation_analysis/backfill_plddt.py
+```
+
+Output: `SPURS/ddg_matrices/{ACC}.{GENE}.ddg_matrix.tsv` — columns: `pos_1based`, `wt_aa`, `plddt`, `to_A` … `to_Y`
+
+After all SPURS jobs complete, build the lightweight unique mutation table:
+
+```bash
+python3 scripts/mutation_analysis/make_unique_missense_table.py \
+    --missense /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv \
+    --spurs-dir /scratch/leduc.an/AAS_Evo/SPURS \
+    -o /scratch/leduc.an/AAS_Evo/ANALYSIS/unique_missense_mutations.tsv
+```
+
+Output: one row per unique (gene, swap) with `spurs_ddg`, `plddt`, `am_pathogenicity`, `n_samples`, `mean_vaf`.
+
+### 5b. SAAP Co-occurrence Analysis
+
+Cross-references the Tsour et al. AAS dataset with our CPTAC missense calls to ask: for each aberrant amino acid substitution (AAS/SAAP) detected by MS in a TMT set, does any patient in that set carry a genomic missense in the same gene?
+
+**Input data** (`metadata/Tsour_et_al/`):
+- `pep_to_protein.csv` — maps each SAAP to its gene, protein, and position
+- `peptide_to_patient.csv` — maps each SAAP to the patients/TMT sets it was detected in, with RAAS (relative AAS abundance)
+
+```bash
+# Step 1: SAAP × missense co-occurrence (per TMT set)
+srun ... python scripts/mutation_analysis/saap_missense_cooccurrence.py \
+    --missense /scratch/leduc.an/AAS_Evo/ANALYSIS/all_missense_with_spurs.tsv
+# Outputs: saap_set_summary.tsv, saap_missense_cooccurrence.tsv
+
+# Step 2: AM score distribution (co-occurring vs background)
+# Co-occurring = missense in SAAP-affected genes, same-set patients
+# Background   = missense in non-SAAP genes, same patients & sets
+srun ... python scripts/mutation_analysis/saap_cooccurrence_am_analysis.py \
+    --missense /scratch/leduc.an/AAS_Evo/ANALYSIS/all_missense_with_spurs.tsv
+
+# Step 3: EVCouplings coupling check
+# For co-occurring pairs, checks if the missense position is evolutionarily
+# coupled to the SAAP position using precomputed EVChits files (ENSP-level)
+srun ... python scripts/mutation_analysis/saap_evcoupling_analysis.py
+# Outputs: evc_coverage.tsv, evc_cooccurrence.tsv, evc_summary.txt
+```
+
+EVChits files are located at `/projects/marubi/collabs/slavov_rna/evcouplings_files/EVChits/` on Discovery. Each file (`ENSP*_EVChits.csv`) contains evolutionary coupling pairs for SAAP positions in that protein, with `mad_score` and `probability` columns as confidence metrics.
+
+### 6. MSA Generation
 
 ```bash
 # Submit MSA generation (auto-finds gene list from ANALYSIS/)
@@ -215,7 +323,7 @@ sbatch --array=1-${NUM_GENES}%10 scripts/mutation_analysis/submit_msa_generation
 
 MSA files named by UniProt accession (`P04637.a3m`). Pre-existing MSAs are auto-detected and skipped.
 
-### 6. Coevolution Analysis
+### 7. Coevolution Analysis
 
 Predicts compensatory translation errors using EVcouplings/Direct Coupling Analysis (DCA). Given a destabilizing missense mutation at position i, uses the Potts model coupling tensor J(i,a;j,b) to identify covarying positions and predict which amino acid substitution could compensate.
 
@@ -228,7 +336,7 @@ sbatch scripts/mutation_analysis/submit_coevolution.sh
 
 Output: `COEVOL/compensatory_predictions.tsv`
 
-### 7. Generate Compensatory FASTAs
+### 8. Generate Compensatory FASTAs
 
 ```bash
 # After coevolution analysis completes:
@@ -237,7 +345,7 @@ sbatch scripts/fasta_gen/submit_compensatory_fastas.sh
 
 Output: `FASTA/compensatory/all_compensatory.fasta` — tryptic peptides containing both the original destabilizing mutation and the predicted compensatory substitution.
 
-### 8. Proteogenomics FASTA Generation
+### 9. Proteogenomics FASTA Generation
 
 ```bash
 # Generate per-sample mutant FASTAs + per-plex search databases
@@ -265,7 +373,7 @@ Per-plex FASTAs (`FASTA/per_plex/`) are rebuilt by `combine_plex_fastas.py` into
 
 The accession field structure is `{UniProtID}-{swap}-{4-char-seq-hash}`. The hash disambiguates multiple tryptic peptides for the same mutation (different missed cleavage contexts). See the FASTA structure section below for why this format is required.
 
-### 9. MS Database Search (FragPipe)
+### 10. MS Database Search (FragPipe)
 
 FragPipe is the primary tool for the MS database search. Each TMT plex is searched independently against its own custom FASTA (reference + plex-specific mutant peptides + compensatory peptides).
 

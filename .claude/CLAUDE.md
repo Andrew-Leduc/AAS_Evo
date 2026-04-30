@@ -53,6 +53,9 @@ AAS_Evo/                              # This repo
 │   │   ├── pdc_all_files_matched.tsv     # Pruned to matched samples
 │   │   ├── pdc_file_tmt_map.tsv          # File → TMT channel → sample
 │   │   └── pdc_meta.tsv                  # Consolidated sample metadata
+│   ├── Tsour_et_al/                      # External AAS dataset (Tsour et al.)
+│   │   ├── pep_to_protein.csv            # 8,401 rows: SAAP → gene/protein/position/ENSP
+│   │   └── peptide_to_patient.csv        # 73,477 rows: SAAP → patient/Dataset/TMT set/RAAS
 │   └── mapping_report.tsv               # GDC↔PDC matching report
 ├── scripts/
 │   ├── setup/
@@ -86,17 +89,22 @@ AAS_Evo/                              # This repo
 │   │   ├── generate_compensatory_fastas.py # Compensatory mutation FASTAs
 │   │   ├── submit_compensatory_fastas.sh # SLURM wrapper
 │   │   └── submit_proteogenomics.sh      # SLURM wrapper for FASTA generation
-│   ├── mutation_analysis/                # Filtering, MSA generation & coevolution
+│   ├── mutation_analysis/                # Filtering, SPURS, MSA generation & coevolution
 │   │   ├── filter_and_rank.py
+│   │   ├── spurs_predict_per_gene.py     # SPURS ddG predictions + pLDDT extraction from AlphaFold PDB
+│   │   ├── submit_spurs_scores.sh        # SLURM array job (uses gene_list_for_spurs_all.txt)
+│   │   ├── add_spurs_to_missense_table.py # Merge spurs_ddg into full per-sample missense table
+│   │   ├── backfill_plddt.py             # Add pLDDT column to existing ddg_matrix files from cached PDBs
+│   │   ├── make_unique_missense_table.py  # Collapse to one row per (gene, swap) + spurs_ddg + plddt
+│   │   ├── setup_spurs_env.sh            # One-time conda env setup for SPURS
 │   │   ├── generate_msas.py
 │   │   ├── submit_msa_generation.sh
+│   │   ├── build_msa_gene_list.py        # Map MSA entry names → UniProt accessions + gene symbols
 │   │   ├── coevolution_analysis.py
 │   │   ├── submit_coevolution.sh
-│   │   ├── build_msa_gene_list.py        # Map MSA entry names → UniProt accessions + gene symbols
-│   │   ├── spurs_predict_per_gene.py     # SPURS ddG stability predictions per gene
-│   │   ├── add_spurs_to_missense_table.py # Merge spurs_ddg into all_missense_mutations.tsv
-│   │   ├── setup_spurs_env.sh            # One-time conda env setup for SPURS
-│   │   └── submit_spurs_scores.sh        # SLURM array job for SPURS (one task per gene)
+│   │   ├── saap_missense_cooccurrence.py  # SAAP × missense co-occurrence per TMT set
+│   │   ├── saap_cooccurrence_am_analysis.py # AM score distribution: co-occurring vs background
+│   │   └── saap_evcoupling_analysis.py    # Check if co-occurring missense is EVC-coupled to SAAP
 │   └── ms_search/                        # FragPipe MS database search
 │       ├── generate_manifests.py
 │       ├── submit_fragpipe.sh
@@ -161,14 +169,21 @@ metadata/
 ├── ANALYSIS/                         # Mutation filtering & ranking output
 │   ├── ranked_mutations.tsv          # All mutations with composite scores
 │   ├── top_5000_mutations.tsv        # Top N subset
-│   ├── all_missense_with_spurs.tsv   # all_missense_mutations.tsv + spurs_ddg column
+│   ├── all_missense_with_spurs.tsv   # Full per-sample missense + spurs_ddg column
+│   ├── unique_missense_mutations.tsv # One row per (gene, swap): spurs_ddg, plddt, n_samples, VAF stats
 │   ├── gene_list_for_msa.txt         # Unique genes from top N (used by MSA/coevolution)
-│   ├── gene_list_for_spurs.txt       # Gene symbols for SPURS array job (copied from metadata/)
+│   ├── gene_list_for_spurs_all.txt   # All missense-table genes not yet computed by SPURS
 │   ├── mutation_burden.tsv           # Per-protein-per-patient counts
-│   └── ranking_summary.txt           # Statistics
+│   ├── ranking_summary.txt           # Statistics
+│   └── saap_cooccurrence/            # SAAP × missense co-occurrence outputs
+│       ├── saap_set_summary.tsv      # Per-(SAAP, TMT set): tested, n_hits
+│       ├── saap_missense_cooccurrence.tsv # Per co-occurrence record with missense_am, missense_spurs_ddg
+│       ├── evc_coverage.tsv          # Per-SAAP: has_evc_file
+│       ├── evc_cooccurrence.tsv      # Co-occurrence records annotated with EVC coupling info
+│       └── evc_summary.txt           # Summary statistics
 ├── SPURS/                            # SPURS ddG stability predictions
-│   ├── pdb_cache/                    # AlphaFold PDB files (downloaded per gene)
-│   ├── ddg_matrices/                 # Per-gene ddG matrices ({ACC}.{GENE}.ddg_matrix.tsv)
+│   ├── pdb_cache/                    # AlphaFold PDB files (downloaded per gene, cached)
+│   ├── ddg_matrices/                 # {ACC}.{GENE}.ddg_matrix.tsv — columns: pos_1based, wt_aa, plddt, to_A…to_Y
 │   └── hf_cache/                     # HuggingFace model cache
 ├── FASTA/                            # Custom proteogenomics FASTAs
 │   ├── per_sample/                   # {uuid}_mutant.fasta (mutants only)
@@ -288,6 +303,31 @@ python3 scripts/mutation_analysis/add_spurs_to_missense_table.py \
     -o /scratch/leduc.an/AAS_Evo/ANALYSIS/all_missense_with_spurs.tsv
 # Output: ANALYSIS/all_missense_with_spurs.tsv (adds spurs_ddg column)
 
+# Build lightweight unique mutation table (one row per gene×swap, with spurs_ddg + pLDDT)
+python3 scripts/mutation_analysis/make_unique_missense_table.py \
+    --missense /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv \
+    --spurs-dir /scratch/leduc.an/AAS_Evo/SPURS \
+    -o /scratch/leduc.an/AAS_Evo/ANALYSIS/unique_missense_mutations.tsv
+# Output: ANALYSIS/unique_missense_mutations.tsv (~500k rows vs ~20M in full table)
+
+# To backfill pLDDT into ddg_matrix files already computed before the plddt column was added:
+python3 scripts/mutation_analysis/backfill_plddt.py \
+    --ddg-dir /scratch/leduc.an/AAS_Evo/SPURS/ddg_matrices \
+    --pdb-cache /scratch/leduc.an/AAS_Evo/SPURS/pdb_cache
+# Reads B-factors from cached AlphaFold PDBs — no model needed, runs in ~2 min
+
+# To run SPURS for all genes in the missense table (not just top-ranked genes):
+# gene_list_for_spurs_all.txt = all missense genes minus already-computed genes
+# Submit in batches of 1000 (Discovery array size limit), using GENE_OFFSET:
+NUM=15621  # wc -l gene_list_for_spurs_all.txt
+BATCH=1000
+for offset in $(seq 0 $BATCH $((NUM - 1))); do
+    remaining=$((NUM - offset))
+    size=$((remaining < BATCH ? remaining : BATCH))
+    GENE_OFFSET=$offset sbatch --array=1-${size}%20 \
+        scripts/mutation_analysis/submit_spurs_scores.sh
+done
+
 # Filter by pathogenicity (AlphaMissense) OR stability (SPURS ddG) for MSA gene list
 python3 scripts/mutation_analysis/filter_and_rank.py \
     --vep-tsv /scratch/leduc.an/AAS_Evo/ANALYSIS/all_missense_with_spurs.tsv \
@@ -295,6 +335,44 @@ python3 scripts/mutation_analysis/filter_and_rank.py \
     -o /scratch/leduc.an/AAS_Evo/ANALYSIS
 # Output: ANALYSIS/top_5000_mutations.tsv, ANALYSIS/gene_list_for_msa.txt
 ```
+
+### 6b. SAAP Co-occurrence & EVCouplings Analysis
+
+Cross-references the Tsour et al. AAS/SAAP dataset with CPTAC missense mutations to ask whether genomic missense mutations co-occur with proteomics-detected AAS events in the same protein and TMT fractionated set.
+
+**External data** (`metadata/Tsour_et_al/`):
+- `pep_to_protein.csv`: SAAP → gene symbol, ENSP ID, protein position (key cols: SAAP, name, protein, protein.position)
+- `peptide_to_patient.csv`: SAAP → Dataset, TMT set, Sample name, RAAS (relative AAS abundance)
+
+```bash
+# Step 1: Co-occurrence (fast, ~5 min; uses gene_index for O(hits) lookup)
+srun ... python3 scripts/mutation_analysis/saap_missense_cooccurrence.py \
+    --missense /scratch/leduc.an/AAS_Evo/ANALYSIS/all_missense_with_spurs.tsv
+# Output: saap_cooccurrence/saap_set_summary.tsv
+#         saap_cooccurrence/saap_missense_cooccurrence.tsv (includes missense_am, missense_spurs_ddg)
+
+# Step 2: AM score comparison (co-occurring vs matched background)
+# Co-occurring = SAAP-gene missense, same-set patients
+# Background   = non-SAAP-gene missense, same patients in same TMT sets (within-set matched)
+srun ... python3 scripts/mutation_analysis/saap_cooccurrence_am_analysis.py \
+    --missense /scratch/leduc.an/AAS_Evo/ANALYSIS/all_missense_with_spurs.tsv
+
+# Step 3: EVCouplings check (requires EVChits files on Discovery)
+# EVChits path: /projects/marubi/collabs/slavov_rna/evcouplings_files/EVChits/
+# Files named ENSP*_EVChits.csv; each row = coupling pair (i,j) for a SAAP at aas_pos
+srun ... python3 scripts/mutation_analysis/saap_evcoupling_analysis.py
+# Output: saap_cooccurrence/evc_coverage.tsv    — which SAAPs have EVChits files
+#         saap_cooccurrence/evc_cooccurrence.tsv — co-occurrence pairs with is_evc_coupled, evc_mad_score, evc_probability
+#         saap_cooccurrence/evc_summary.txt
+```
+
+**EVChits format**: columns `i, A_i, j, A_j, aas_pos, aas_wt, aas_mut, mad_score, probability, score, bitscore`. A missense at position P is coupled to SAAP at position Q if `aas_pos==Q` and (`i==P` or `j==P`). High-confidence threshold: `probability > 0.9`.
+
+**Key findings to date** (as of 2026-04-30):
+- 18.5% of (SAAP, TMT set) combinations have ≥1 co-occurring missense in the same gene
+- 155/890 testable EVC pairs are evolutionarily coupled (17.4% where EVC data exists for the SAAP position)
+- GSPT1 (translation termination factor) dominates coupled records (115/155) — mechanistically interesting
+- HBB SAAPs are ubiquitous (~1,068 patients); HBB co-occurrences are likely coincidental despite EVC coupling
 
 ### 7. Generate MSAs for Coevolution Analysis
 ```bash
@@ -374,6 +452,18 @@ The BAM processing pipeline extracts missense mutations for multi-omics integrat
    - `am_class`: AlphaMissense classification (likely_benign/ambiguous/likely_pathogenic)
    - `DP`, `AD_ref`, `AD_alt`: Read depth and allelic depths
    - `VAF`: Variant allele frequency in sample
+
+## SPURS ddG Matrix Details
+
+Each `{ACC}.{GENE}.ddg_matrix.tsv` has one row per protein position:
+- `pos_1based`: 1-based residue position
+- `wt_aa`: wildtype amino acid at that position
+- `plddt`: AlphaFold per-residue confidence score (0–100, from B-factor column of cached PDB). Positions with pLDDT < 70 are in disordered/low-confidence regions; ddG predictions there are less reliable.
+- `to_A` … `to_Y`: predicted ddG for each of the 20 amino acid substitutions (positive = destabilizing)
+
+To look up the ddG and pLDDT for a specific missense (e.g., R273H in TP53): find the row where `pos_1based==273`, read `plddt`, then read `to_H`.
+
+`backfill_plddt.py` retroactively adds the `plddt` column to files computed before this feature was added. New files from `spurs_predict_per_gene.py` include it automatically.
 
 ## Mutation Filtering & Ranking Details
 
