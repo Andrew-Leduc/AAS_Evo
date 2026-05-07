@@ -98,9 +98,9 @@ def main():
     cooc["missense_am"]        = pd.to_numeric(cooc["missense_am"],        errors="coerce")
     cooc["missense_spurs_ddg"] = pd.to_numeric(cooc["missense_spurs_ddg"], errors="coerce")
 
-    both = cooc[(cooc["missense_am"]        >= AM_THRESHOLD) &
+    both = cooc[(cooc["missense_am"]        >= AM_THRESHOLD) |
                 (cooc["missense_spurs_ddg"] >= SPURS_THRESHOLD)].copy()
-    print(f"  Both AM+SPURS destabilizing pairs: {len(both):,}", flush=True)
+    print(f"  AM or SPURS destabilizing pairs: {len(both):,}", flush=True)
 
     # Extract missense position from missense_swap (e.g. R273H -> 273)
     def parse_pos(swap):
@@ -172,8 +172,8 @@ def main():
     n_contact  = both["in_structural_contact"].sum()
 
     lines = [
-        "── STRUCTURAL CONTACT: SAAP × BOTH-DESTAB MISSENSE ───────────────────",
-        f"Both AM+SPURS pairs:              {len(both):,}",
+        "── STRUCTURAL CONTACT: SAAP × AM-OR-SPURS-DESTAB MISSENSE ────────────",
+        f"AM or SPURS destabilizing pairs:  {len(both):,}",
         f"  No gene->accession mapping:     {n_no_acc:,}",
         f"  No contact map file:            {n_no_map:,}",
         f"  Position not in map:            {n_no_pos:,}",
