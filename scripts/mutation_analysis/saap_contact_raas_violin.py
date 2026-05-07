@@ -24,9 +24,9 @@ GDC_META    = str(REPO_DIR / "metadata" / "GDC_meta" / "gdc_meta_matched.tsv")
 COOC        = "/scratch/leduc.an/AAS_Evo/ANALYSIS/saap_cooccurrence/saap_contact_annotated.tsv"
 OUT_DEFAULT = "/scratch/leduc.an/AAS_Evo/ANALYSIS/saap_cooccurrence"
 
-GROUP_ORDER  = ["Both AM+SPURS", "SPURS only", "AM only", "Benign"]
+GROUP_ORDER  = ["Both AM+SPURS", "SPURS only", "AM only", "Benign", "Neither"]
 GROUP_COLORS = {"Both AM+SPURS": "#d62728", "SPURS only": "#9467bd",
-                "AM only": "#ff7f0e", "Benign": "#2ca02c"}
+                "AM only": "#ff7f0e", "Benign": "#2ca02c", "Neither": "#aec7e8"}
 
 
 def classify(am, spurs):
@@ -41,7 +41,7 @@ def classify(am, spurs):
         return "AM only"
     if am_benign:
         return "Benign"
-    return None  # ambiguous — exclude
+    return "Neither"
 
 
 def main():
@@ -72,7 +72,6 @@ def main():
                   (df["structural_distance_ang"] > 0.0)].copy()
     contacts["group"] = contacts.apply(
         lambda r: classify(r["missense_am"], r["missense_spurs_ddg"]), axis=1)
-    contacts = contacts[contacts["group"].notna()]
     contacts["missense_case_id"] = contacts["missense_sample_id"].map(uuid_to_case)
 
     print(f"Contacted pairs (excl. same-site): {len(contacts):,}", flush=True)
