@@ -16,6 +16,7 @@ Output headers: >contact_pred|{ACC}|{GENE}|{SWAP}|{source}|{patient}|{sample_typ
 """
 
 import argparse
+import hashlib
 import re
 import random
 import numpy as np
@@ -77,7 +78,14 @@ def tryptic_peptides(seq, pos_1based, max_missed=1):
 
 
 def make_swap_peptides(seq, acc, gene, pos_1based, sample_type, patient, source_tag):
-    """Generate tryptic peptides with all 19 AA swaps at pos_1based."""
+    """Generate tryptic peptides with all 19 AA swaps at pos_1based.
+
+    Header format matches Philosopher-compatible mock-UniProt format:
+      >sp|{ACC}-{SWAP}-{HASH}|{GENE}-contact {description} GN={GENE} ...
+    Accession uses real UniProt accession as base so Philosopher classifies
+    it as a UniProt variant (not generic), stores it in db.bin, and doesn't
+    crash during filter. No underscores in accession field.
+    """
     entries = []
     wt = seq[pos_1based - 1]
     for alt in ALPHABET:
@@ -88,8 +96,12 @@ def make_swap_peptides(seq, acc, gene, pos_1based, sample_type, patient, source_
             pep = mut_seq[start:end]
             if len(pep) < 6:
                 continue
-            swap = f"{wt}{pos_1based}{alt}"
-            header = f">contact_pred|{acc}|{gene}|{swap}|{source_tag}|{patient}|{sample_type}"
+            swap     = f"{wt}{pos_1based}{alt}"
+            seq_hash = hashlib.md5(pep.encode()).hexdigest()[:4].upper()
+            accession = f"{acc}-{swap}-{seq_hash}"
+            header = (f">sp|{accession}|{gene}-contact "
+                      f"{gene} contact prediction {swap} {source_tag} "
+                      f"OS=Homo sapiens OX=9606 GN={gene} PE=1 SV=1")
             entries.append((header, pep))
     return entries
 
@@ -295,7 +307,32 @@ def main():
             for header, pep in entries.values():
                 f.write(f"{header}\n{pep}\n")
 
-    print(f"\nDone. FASTAs written to {out_dir}/", flush=True)
+    print(f"\nDone. Contact SAAP FASTAs written to {out_dir}/", flush=True)
+
+    # ── Combine with existing per-plex FASTAs ─────────────────────────────────
+    # Appends contact SAAP entries to per_plex/ FASTAs → per_plex_contact/
+    # Then add_decoys.py should be run on per_plex_contact/ before FragPipe.
+    per_plex_dir     = Path(args.out_dir).parent / "per_plex"
+    combined_dir     = Path(args.out_dir).parent / "per_plex_contact"
+    combined_dir.mkdir(parents=True, exist_ok=True)
+
+    n_combined = 0
+    for plex_id in plex_ids:
+        base_fasta    = per_plex_dir    / f"{plex_id}.fasta"
+        contact_fasta = out_dir         / f"{plex_id}.fasta"
+        combined_fasta= combined_dir    / f"{plex_id}.fasta"
+
+        if not base_fasta.exists():
+            continue
+        with open(combined_fasta, "w") as out_f:
+            out_f.write(base_fasta.read_text())
+            if contact_fasta.exists():
+                out_f.write("\n")
+                out_f.write(contact_fasta.read_text())
+        n_combined += 1
+
+    print(f"Combined FASTAs written to {combined_dir}/ ({n_combined} plexes)", flush=True)
+    print("Next step: run add_decoys.py on per_plex_contact/ then resubmit FragPipe.", flush=True)
 
 
 if __name__ == "__main__":
