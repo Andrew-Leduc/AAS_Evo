@@ -24,9 +24,9 @@ GDC_META    = str(REPO_DIR / "metadata" / "GDC_meta" / "gdc_meta_matched.tsv")
 COOC        = "/scratch/leduc.an/AAS_Evo/ANALYSIS/saap_cooccurrence/saap_contact_annotated.tsv"
 OUT_DEFAULT = "/scratch/leduc.an/AAS_Evo/ANALYSIS/saap_cooccurrence"
 
-GROUP_ORDER  = ["Both AM+SPURS", "SPURS only", "AM only", "Benign", "Neither"]
+GROUP_ORDER  = ["Both AM+SPURS", "SPURS only", "AM only", "Non-destabilizing"]
 GROUP_COLORS = {"Both AM+SPURS": "#d62728", "SPURS only": "#9467bd",
-                "AM only": "#ff7f0e", "Benign": "#2ca02c", "Neither": "#aec7e8"}
+                "AM only": "#ff7f0e", "Non-destabilizing": "#2ca02c"}
 
 
 def classify(am, spurs):
@@ -39,9 +39,7 @@ def classify(am, spurs):
         return "SPURS only"
     if am_destab and not spurs_destab:
         return "AM only"
-    if am_benign:
-        return "Benign"
-    return "Neither"
+    return "Non-destabilizing"
 
 
 def main():
@@ -78,8 +76,13 @@ def main():
     for g in GROUP_ORDER:
         print(f"  {g}: {(contacts['group']==g).sum()}", flush=True)
 
+    # ── Funnel diagnostic ─────────────────────────────────────────────────────
+    n_unique_pairs = contacts.groupby(["SAAP","missense_swap"]).ngroups
+    print(f"\nUnique (SAAP, missense) pairs: {n_unique_pairs}", flush=True)
+
     # ── Compute RAAS diff per (SAAP, missense_swap, group) ────────────────────
     group_diffs = {g: [] for g in GROUP_ORDER}
+    n_no_with = n_no_without = n_ok = 0
 
     for (saap, miss_swap, group), grp in contacts.groupby(["SAAP","missense_swap","group"]):
         missense_cases = set(grp["missense_case_id"].dropna())
@@ -87,10 +90,17 @@ def main():
         saap_pat["has_missense"] = saap_pat["case_id"].isin(missense_cases)
         with_m    = saap_pat[saap_pat["has_missense"]]["RAAS"].dropna()
         without_m = saap_pat[~saap_pat["has_missense"]]["RAAS"].dropna()
-        if len(with_m) == 0 or len(without_m) == 0:
-            continue
+        if len(with_m) == 0:
+            n_no_with += 1; continue
+        if len(without_m) == 0:
+            n_no_without += 1; continue
+        n_ok += 1
         diff = with_m.mean() - without_m.mean()
         group_diffs[group].append(diff)
+
+    print(f"Pairs with RAAS data both sides: {n_ok}")
+    print(f"  Dropped — no RAAS for missense carriers:     {n_no_with}")
+    print(f"  Dropped — no RAAS for non-carriers:          {n_no_without}", flush=True)
 
     # ── Plot ──────────────────────────────────────────────────────────────────
     fig, axes = plt.subplots(1, 2, figsize=(13, 6))
