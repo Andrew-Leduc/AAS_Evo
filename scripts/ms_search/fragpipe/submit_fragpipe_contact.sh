@@ -86,10 +86,14 @@ fi
 
 mkdir -p "$OUTDIR"
 
+# Patch workflow to use contact FASTA (original workflows point to per_plex_fragpipe/)
+PATCHED_WORKFLOW="${OUTDIR}/patched.workflow"
+sed "s|database.db-path=.*|database.db-path=${FASTA}|g" "$WORKFLOW" > "$PATCHED_WORKFLOW"
+
 echo "[$(date)] Starting FragPipe search for plex: $PLEX_ID"
 echo "  Manifest:  $MANIFEST"
 echo "  FASTA:     $FASTA"
-echo "  Workflow:  $WORKFLOW"
+echo "  Workflow:  $PATCHED_WORKFLOW (patched from $WORKFLOW)"
 echo "  Output:    $OUTDIR"
 echo "  Threads:   ${SLURM_CPUS_PER_TASK}"
 echo ""
@@ -103,7 +107,7 @@ fi
 # Run FragPipe in headless mode
 "$FRAGPIPE_BIN" \
     --headless \
-    --workflow "$WORKFLOW" \
+    --workflow "$PATCHED_WORKFLOW" \
     --manifest "$MANIFEST" \
     --workdir "$OUTDIR" \
     --threads "${SLURM_CPUS_PER_TASK}" \
