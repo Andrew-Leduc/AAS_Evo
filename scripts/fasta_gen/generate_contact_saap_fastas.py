@@ -212,12 +212,19 @@ def main():
     print(f"  Destab: {len(destab):,} | Neutral: {len(neutral):,}", flush=True)
 
     gene_to_acc = build_gene_to_acc(args.ddg_dir)
-    # supplement from ref FASTA
     for gene, acc in gene2acc.items():
         if gene not in gene_to_acc:
             gene_to_acc[gene] = acc
 
-    cm_cache = {}
+    # Pre-build UUID -> sample_type lookup
+    uuid_to_stype = gdc.set_index("gdc_file_id")["sample_type"].to_dict()
+
+    # Pre-index missense by sample_id for fast plex subsetting
+    destab_by_uuid  = destab.groupby("sample_id")
+    neutral_by_uuid = neutral.groupby("sample_id")
+
+    cm_cache    = {}   # acc -> (pos_to_idx, dm)
+    nearby_cache = {}  # (acc, pos) -> list of nearby positions
 
     TMT_CH_MAP = {
         "tmt_126":"126","tmt_127n":"127N","tmt_127c":"127C",
@@ -247,57 +254,61 @@ def main():
         if not uuids:
             continue
 
-        plex_destab  = destab[destab["sample_id"].isin(uuids)]
-        plex_neutral = neutral[neutral["sample_id"].isin(uuids)]
+        # Collect unique (gene, pos) pairs from plex patients — faster than per-row
+        def get_unique_gene_pos(uuid_set, groupby_obj):
+            frames = []
+            for uid in uuid_set:
+                if uid in groupby_obj.groups:
+                    frames.append(groupby_obj.get_group(uid))
+            if not frames:
+                return pd.DataFrame()
+            return pd.concat(frames)[["SYMBOL","pos"]].dropna().drop_duplicates()
 
-        # Sample neutral to match destab size
-        n_destab = len(plex_destab)
-        if len(plex_neutral) > n_destab:
-            plex_neutral = plex_neutral.sample(n_destab, random_state=args.seed)
+        destab_gp  = get_unique_gene_pos(uuids, destab_by_uuid)
+        neutral_gp = get_unique_gene_pos(uuids, neutral_by_uuid)
 
-        entries = {}  # (header, pep) deduplicated by peptide seq
+        # Sample neutral to match destab count
+        if len(neutral_gp) > len(destab_gp):
+            neutral_gp = neutral_gp.sample(len(destab_gp), random_state=args.seed)
 
-        def process_mutations(df, source_tag):
+        entries = {}  # pep_seq -> (header, pep)
+
+        def process_gene_pos(df, source_tag):
             for _, row in df.iterrows():
                 gene = str(row["SYMBOL"])
-                pos  = row["pos"]
-                if pd.isna(pos):
-                    continue
-                pos = int(pos)
-                acc = gene_to_acc.get(gene)
+                pos  = int(row["pos"])
+                acc  = gene_to_acc.get(gene)
                 if not acc or acc not in seqs:
                     continue
                 seq = seqs[acc]
                 if pos < 1 or pos > len(seq):
                     continue
 
-                # Get contact map
                 if acc not in cm_cache:
                     cm_cache[acc] = load_contact_map(args.contact_dir, acc)
                 pos_to_idx, dm = cm_cache[acc]
                 if dm is None:
                     continue
 
-                nearby = nearby_positions(pos_to_idx, dm, pos, args.dist)
+                cache_key = (acc, pos)
+                if cache_key not in nearby_cache:
+                    nearby_cache[cache_key] = nearby_positions(
+                        pos_to_idx, dm, pos, args.dist)
+                nearby = nearby_cache[cache_key]
                 if not nearby:
                     continue
-
-                patient    = row["sample_id"]
-                sample_type = gdc.loc[gdc["gdc_file_id"] == patient,
-                                      "sample_type"].iloc[0] \
-                              if patient in gdc["gdc_file_id"].values else "unknown"
 
                 for jpos in nearby:
                     if jpos < 1 or jpos > len(seq):
                         continue
                     for header, pep in make_swap_peptides(
                             seq, acc, gene, jpos,
-                            sample_type, patient, source_tag):
+                            "tumor", "plex_patient", source_tag):
                         if pep not in entries:
                             entries[pep] = (header, pep)
 
-        process_mutations(plex_destab,  "destab_contact")
-        process_mutations(plex_neutral, "neutral_contact")
+        process_gene_pos(destab_gp,  "destab_contact")
+        process_gene_pos(neutral_gp, "neutral_contact")
 
         if not entries:
             continue
