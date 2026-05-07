@@ -53,27 +53,40 @@ def build_gene_to_acc(ddg_dir: Path) -> dict:
     return g2a
 
 
-def load_contact_map(contact_dir: Path, acc: str):
+def load_contact_map(contact_dir: Path, acc: str, saap_pos: int = None, miss_pos: int = None):
     """
     Load distance map for a UniProt accession.
+    Handles both old (AF-{acc}-F1) and new (AF-{acc}-{num}-F1) naming.
+    If multiple fragments exist and positions are given, picks the fragment
+    covering both positions. Otherwise returns the first available fragment.
     Returns (pos_to_idx dict, distance_matrix) or (None, None) if not found.
-    pos_to_idx maps 1-based protein position -> 0-based matrix index.
     """
-    prefix = contact_dir / f"AF-{acc}-F1"
-    csv_path = Path(str(prefix) + ".csv")
-    npy_path = Path(str(prefix) + ".npy")
-    if not csv_path.exists() or not npy_path.exists():
+    # Find all matching fragment files for this accession
+    candidates = sorted(contact_dir.glob(f"AF-{acc}-*F1.npy"))
+    if not candidates:
         return None, None
-    try:
-        meta = pd.read_csv(csv_path, index_col=0)
-        dm   = np.load(npy_path)
-        # id column is 1-based residue position, row index is 0-based matrix index
-        pos_to_idx = {int(row["id"]): idx for idx, row in meta.iterrows()
-                      if pd.notna(row["id"])}
-        return pos_to_idx, dm
-    except Exception as e:
-        print(f"  [WARN] Failed to load {acc}: {e}")
-        return None, None
+
+    best = None
+    for npy_path in candidates:
+        csv_path = npy_path.with_suffix(".csv")
+        if not csv_path.exists():
+            continue
+        try:
+            meta = pd.read_csv(csv_path, index_col=0)
+            dm   = np.load(npy_path)
+            pos_to_idx = {int(row["id"]): idx for idx, row in meta.iterrows()
+                          if pd.notna(row["id"])}
+            # If positions given, prefer fragment that covers both
+            if saap_pos and miss_pos:
+                if saap_pos in pos_to_idx and miss_pos in pos_to_idx:
+                    return pos_to_idx, dm
+                if best is None:
+                    best = (pos_to_idx, dm)
+            else:
+                return pos_to_idx, dm
+        except Exception as e:
+            print(f"  [WARN] Failed to load {npy_path.name}: {e}")
+    return best if best else (None, None)
 
 
 def main():
@@ -86,7 +99,18 @@ def main():
     # ── Build gene -> accession map ───────────────────────────────────────────
     print("Building gene -> accession map...", flush=True)
     gene_to_acc = build_gene_to_acc(ddg_dir)
-    print(f"  {len(gene_to_acc):,} genes with ddg matrices", flush=True)
+    # Supplement with UniProt FASTA for genes not in ddg_matrices (large proteins)
+    import re as _re
+    ref_fasta = Path(args.contact_dir).parents[1] / "SEQ_FILES" / "uniprot_human_canonical.fasta"
+    if ref_fasta.exists():
+        with open(ref_fasta) as f:
+            for line in f:
+                if not line.startswith(">"): continue
+                m_acc  = _re.search(r"\|([A-Z0-9]+)\|", line)
+                m_gene = _re.search(r"GN=(\S+)", line)
+                if m_acc and m_gene and m_gene.group(1) not in gene_to_acc:
+                    gene_to_acc[m_gene.group(1)] = m_acc.group(1)
+    print(f"  {len(gene_to_acc):,} genes with accession mapping", flush=True)
 
     # ── Count available contact maps ──────────────────────────────────────────
     n_maps = len(list(contact_dir.glob("*.npy")))
@@ -142,7 +166,7 @@ def main():
             n_no_acc += 1; continue
 
         if acc not in cm_cache:
-            cm_cache[acc] = load_contact_map(contact_dir, acc)
+            cm_cache[acc] = load_contact_map(contact_dir, acc, saap_pos, miss_pos)
         pos_to_idx, dm = cm_cache[acc]
 
         if dm is None:
