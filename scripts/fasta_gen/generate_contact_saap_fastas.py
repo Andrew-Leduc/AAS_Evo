@@ -154,17 +154,16 @@ def load_contact_map(contact_dir, acc):
 
 
 def nearby_positions(pos_to_idx, dm, pos_1based, threshold):
-    """Return list of 1-based positions within threshold Å of pos_1based."""
+    """Return list of 1-based positions within threshold Å of pos_1based (vectorized)."""
     idx = pos_to_idx.get(pos_1based)
     if idx is None:
         return []
-    dists = dm[idx]
-    nearby = []
-    for p, j in pos_to_idx.items():
-        d = dists[j]
-        if 0 < d < threshold and p != pos_1based:
-            nearby.append(p)
-    return nearby
+    dists    = dm[idx]
+    pos_arr  = np.array(list(pos_to_idx.keys()),   dtype=np.int32)
+    idx_arr  = np.array(list(pos_to_idx.values()),  dtype=np.int32)
+    d_vals   = dists[idx_arr]
+    mask     = (d_vals > 0) & (d_vals < threshold) & (pos_arr != pos_1based)
+    return pos_arr[mask].tolist()
 
 
 def main():
@@ -210,6 +209,13 @@ def main():
                      (miss["gnomADe_AF"] >= GNOMAD_NEUTRAL)].copy()
 
     print(f"  Destab: {len(destab):,} | Neutral: {len(neutral):,}", flush=True)
+
+    # Pre-filter to only sample_ids that appear in any plex (avoids 10M groupby)
+    all_plex_uuids = set(gdc.loc[gdc["case_submitter_id"].isin(
+        tmt[tmt["run_metadata_id"].isin(plex_ids)]["case_submitter_id"]), "gdc_file_id"])
+    destab  = destab[destab["sample_id"].isin(all_plex_uuids)]
+    neutral = neutral[neutral["sample_id"].isin(all_plex_uuids)]
+    print(f"  After plex filter — Destab: {len(destab):,} | Neutral: {len(neutral):,}", flush=True)
 
     gene_to_acc = build_gene_to_acc(args.ddg_dir)
     for gene, acc in gene2acc.items():
