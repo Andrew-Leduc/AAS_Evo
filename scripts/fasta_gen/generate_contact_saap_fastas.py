@@ -93,8 +93,10 @@ def parse_args():
 
 
 # ── Tryptic digestion ────────────────────────────────────────────────────────
-def tryptic_peptides(seq, pos_1based, max_missed=1):
-    """Return tryptic peptides (0-missed + 1-missed) that cover pos_1based."""
+def tryptic_peptides(seq, pos_1based, max_missed=0):
+    """Return tryptic peptides covering pos_1based (no missed cleavages by default).
+    FragPipe handles missed cleavages during search so the FASTA only needs the
+    fully-tryptic peptide."""
     cuts = [-1]
     for i, aa in enumerate(seq):
         if aa in "KR" and (i + 1 >= len(seq) or seq[i + 1] != "P"):
