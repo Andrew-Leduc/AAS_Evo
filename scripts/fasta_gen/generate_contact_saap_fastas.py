@@ -28,6 +28,17 @@ REPO_DIR = Path(__file__).resolve().parents[2]
 
 ALPHABET = "ACDEFGHIKLMNPQRSTVWY"
 
+# Swaps excluded because they are indistinguishable from common modifications
+# or isobaric with the wildtype peptide at typical Orbitrap resolution:
+#   N->D / Q->E  : deamidation artifact (+0.984 Da), routinely searched as PTM
+#   D->N / E->Q  : reverse deamidation (same mass shift)
+#   I<->L        : isobaric — identical mass, cannot be distinguished by MS/MS
+EXCLUDED_SWAPS = {
+    ('N', 'D'), ('D', 'N'),
+    ('Q', 'E'), ('E', 'Q'),
+    ('I', 'L'), ('L', 'I'),
+}
+
 AM_THRESHOLD    = 0.564
 SPURS_THRESHOLD = 0.5
 AM_BENIGN_MAX   = 0.1
@@ -91,6 +102,8 @@ def make_swap_peptides(seq, acc, gene, pos_1based, sample_type, patient, source_
     wt = seq[pos_1based - 1]
     for alt in ALPHABET:
         if alt == wt:
+            continue
+        if (wt, alt) in EXCLUDED_SWAPS:
             continue
         mut_seq = seq[:pos_1based - 1] + alt + seq[pos_1based:]
         for start, end in tryptic_peptides(seq, pos_1based):
