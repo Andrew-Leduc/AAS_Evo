@@ -34,7 +34,8 @@ AM_BENIGN_MAX   = 0.1
 GNOMAD_NEUTRAL  = 0.1
 GNOMAD_MAX      = 0.01
 VAF_THRESHOLD   = 0.3
-DIST_THRESHOLD  = 3.0   # Å Cα-Cα
+DIST_THRESHOLD  = 4.0   # Å Cα-Cα
+MIN_SEQ_SEP     = 21    # min AA separation between contact pos and missense pos
 
 DEFAULTS = dict(
     missense   = "/scratch/leduc.an/AAS_Evo/ANALYSIS/all_missense_with_spurs.tsv",
@@ -306,6 +307,10 @@ def main():
 
                 for jpos in nearby:
                     if jpos < 1 or jpos > len(seq):
+                        continue
+                    # Skip if contact position is within max peptide length of the
+                    # missense — they would land in the same tryptic peptide.
+                    if abs(jpos - pos) < MIN_SEQ_SEP:
                         continue
                     for header, pep in make_swap_peptides(
                             seq, acc, gene, jpos,
