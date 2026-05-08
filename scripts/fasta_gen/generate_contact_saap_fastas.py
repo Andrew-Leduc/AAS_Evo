@@ -114,7 +114,8 @@ def tryptic_peptides(seq, pos_1based, max_missed=0):
     return list(set(results))
 
 
-def make_swap_peptides(seq, acc, gene, pos_1based, sample_type, patient, source_tag):
+def make_swap_peptides(seq, acc, gene, pos_1based, sample_type, patient, source_tag,
+                       canonical_peptides=None):
     """Generate tryptic peptides with all 19 AA swaps at pos_1based.
 
     Header format matches Philosopher-compatible mock-UniProt format:
@@ -138,6 +139,11 @@ def make_swap_peptides(seq, acc, gene, pos_1based, sample_type, patient, source_
         for start, end in tryptic_peptides(seq, pos_1based):
             pep = mut_seq[start:end]
             if len(pep) < 6:
+                continue
+            # Skip if this swap peptide sequence exists as a canonical tryptic
+            # peptide in the human proteome — it would be indistinguishable
+            # from a real protein and create false positives.
+            if canonical_peptides is not None and pep in canonical_peptides:
                 continue
             swap     = f"{wt}{pos_1based}{alt}"
             seq_hash = hashlib.md5(pep.encode()).hexdigest()[:4].upper()
@@ -176,7 +182,7 @@ def build_gene_to_acc(ddg_dir):
             for f in Path(ddg_dir).glob("*.ddg_matrix.tsv")}
 
 
-def load_contact_map(contact_dir, acc):
+def load_contact_map(contact_dir, acc, seq_len=None):
     cdir = Path(contact_dir)
     candidates = sorted(cdir.glob(f"AF-{acc}-*F1.npy"))
     if not candidates:
@@ -190,6 +196,17 @@ def load_contact_map(contact_dir, acc):
             dm   = np.load(npy_path)
             pos_to_idx = {int(row["id"]): i for i, row in meta.iterrows()
                           if pd.notna(row["id"])}
+            if not pos_to_idx:
+                continue
+            # Sanity check: contact map positions must be consistent with the
+            # reference sequence. A large overshoot means a numbering mismatch
+            # (e.g. wrong isoform) and would silently corrupt position lookups.
+            if seq_len is not None:
+                map_max = max(pos_to_idx.keys())
+                if map_max > seq_len + 5:
+                    print(f"  [SKIP] {acc}: contact map max pos {map_max} > "
+                          f"seq len {seq_len} — likely isoform mismatch")
+                    return None, None
             return pos_to_idx, dm
         except Exception:
             continue
@@ -218,6 +235,23 @@ def main():
     print("Loading reference FASTA...", flush=True)
     seqs, gene2acc, acc2gene = load_ref_fasta(args.ref_fasta)
     print(f"  {len(seqs):,} sequences loaded", flush=True)
+
+    # Build set of all canonical tryptic peptides (0 missed cleavage, len>=6).
+    # Any swap peptide matching one of these is indistinguishable from a real
+    # canonical peptide in another protein and must be excluded from the FASTA.
+    print("Building canonical tryptic peptide set...", flush=True)
+    canonical_peptides = set()
+    for seq in seqs.values():
+        cuts = [-1]
+        for i, aa in enumerate(seq):
+            if aa in "KR" and (i + 1 >= len(seq) or seq[i + 1] != "P"):
+                cuts.append(i)
+        cuts.append(len(seq) - 1)
+        for i in range(len(cuts) - 1):
+            pep = seq[cuts[i] + 1 : cuts[i + 1] + 1]
+            if len(pep) >= 6:
+                canonical_peptides.add(pep)
+    print(f"  {len(canonical_peptides):,} canonical tryptic peptides indexed", flush=True)
 
     print("Loading metadata...", flush=True)
     tmt = pd.read_csv(args.tmt_map, sep="\t")
@@ -334,7 +368,7 @@ def main():
                     continue
 
                 if acc not in cm_cache:
-                    cm_cache[acc] = load_contact_map(args.contact_dir, acc)
+                    cm_cache[acc] = load_contact_map(args.contact_dir, acc, seq_len=len(seq))
                 pos_to_idx, dm = cm_cache[acc]
                 if dm is None:
                     continue
@@ -356,7 +390,8 @@ def main():
                         continue
                     for header, pep in make_swap_peptides(
                             seq, acc, gene, jpos,
-                            "tumor", "plex_patient", source_tag):
+                            "tumor", "plex_patient", source_tag,
+                            canonical_peptides=canonical_peptides):
                         if pep not in entries:
                             entries[pep] = (header, pep)
 
