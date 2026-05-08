@@ -68,7 +68,7 @@ AM_BENIGN_MAX   = 0.1
 GNOMAD_NEUTRAL  = 0.1
 GNOMAD_MAX      = 0.01
 VAF_THRESHOLD   = 0.3
-DIST_THRESHOLD  = 4.0   # Å Cα-Cα
+DIST_THRESHOLD  = 3.0   # Å Cα-Cα
 MIN_SEQ_SEP     = 21    # min AA separation between contact pos and missense pos
 
 DEFAULTS = dict(
