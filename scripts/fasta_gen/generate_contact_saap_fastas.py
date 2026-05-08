@@ -38,14 +38,20 @@ _AA_MASS = {
 }
 _OXIDATION = 15.9949   # mass of one oxygen atom
 
+_DEHYDROGENATION = 2.01565  # loss of 2H (methionine → dehydromethionine)
+
 def _is_oxidation_confound(wt, alt):
-    """True if one side is M and the mass difference is within 0.05 Da of ±oxidation.
-    Catches M↔F (+16.03 Da) and M↔D (−16.01 Da), which overlap with
-    methionine oxidation/sulfoxide artifacts in TMT workflows."""
+    """True if one side is M and the mass difference overlaps with a known
+    methionine modification artifact:
+      M↔F (+16.03 Da): oxidation/sulfoxide
+      M↔D (−16.01 Da): oxidation artifact
+      M↔E (−2.00 Da):  dehydromethionine (−2H) ≈ E within typical search tolerance
+    """
     if wt != 'M' and alt != 'M':
         return False
     delta = abs(_AA_MASS.get(alt, 0) - _AA_MASS.get(wt, 0))
-    return abs(delta - _OXIDATION) < 0.05
+    return (abs(delta - _OXIDATION) < 0.05 or
+            abs(delta - _DEHYDROGENATION) < 0.05)
 
 # Residues that are tryptic cleavage sites or carry TMT label —
 # swapping to/from these changes peptide boundaries or labeling state.
