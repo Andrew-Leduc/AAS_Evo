@@ -2,19 +2,23 @@
 """
 Feasibility diagnostic for the carrier-vs-non-carrier RAAS design.
 
-For each TMT set (plex), count how many distinct missense mutations have at
-least --min-patients CARRIER channels AND at least --min-patients NON-CARRIER
-channels within that set (so a per-event carrier-vs-non-carrier test is
-possible). Plots a histogram over TMT sets of that count.
+Panel A: for each TMT set (plex), how many distinct missense mutations have at
+    least --min-patients CARRIER channels AND at least --min-patients NON-CARRIER
+    channels within that set (so a per-event carrier-vs-non-carrier test is
+    possible). Histogram over TMT sets.
+
+Panel B: for the SUBSET of testable missense (>=k carriers & >=k non-carriers in
+    >=1 set), how many contact-proximal positions (Ca-Ca < --dist-threshold) sit
+    at least --min-seq-sep residues away in sequence — i.e. how many AAS
+    candidate sites each testable missense actually has. Histogram over that
+    subset. Shows how tied our hands are once contacts are required.
 
 A "missense" is a (gene, protein position, wt, alt) protein-level variant with
-VAF >= --vaf-threshold. Carriers = genomics-processed channels in the set whose
-GDC sample carries it; non-carriers = the remaining genomics channels in the set.
-
-No EVE / contact filtering — this is the upper bound before those narrow it.
+VAF >= --vaf-threshold.  No EVE filtering — this is the ceiling before EVE.
 """
 
 import argparse
+import re
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -49,15 +53,85 @@ def build_plex_uuidsets(tmt, gdc, processed_uuids):
     return plex_uuids
 
 
+def build_gene_to_acc(ref_fasta, ddg_dir):
+    g2a = {}
+    if ddg_dir and Path(ddg_dir).exists():
+        for f in Path(ddg_dir).glob('*.ddg_matrix.tsv'):
+            parts = f.name.split('.')
+            if len(parts) >= 2:
+                g2a[parts[1]] = parts[0]
+    with open(ref_fasta) as fh:
+        for line in fh:
+            if line.startswith('>'):
+                p = line.split('|')
+                acc = p[1] if len(p) >= 3 else line[1:].split()[0]
+                m = re.search(r'GN=(\S+)', line)
+                if m and m.group(1) not in g2a:
+                    g2a[m.group(1)] = acc
+    return g2a
+
+
+class ContactMaps:
+    def __init__(self, contact_dir, dist_threshold):
+        self.dir = Path(contact_dir)
+        self.thr = dist_threshold
+        self._cache = {}
+        self._avail = set()
+        for npy in self.dir.glob('AF-*F1.npy'):
+            if npy.with_suffix('.csv').exists():
+                m = re.match(r'AF-([A-Z0-9]+)-', npy.name)
+                if m:
+                    self._avail.add(m.group(1))
+
+    def has(self, acc):
+        return acc in self._avail
+
+    def _get(self, acc):
+        if acc not in self._cache:
+            res = (None, None)
+            for npy in sorted(self.dir.glob(f'AF-{acc}-*F1.npy')):
+                csv = npy.with_suffix('.csv')
+                if not csv.exists():
+                    continue
+                try:
+                    meta = pd.read_csv(csv, index_col=0)
+                    dm = np.load(npy)
+                    p2i = {int(r['id']): i for i, r in meta.iterrows() if pd.notna(r['id'])}
+                    res = (p2i, dm)
+                    break
+                except Exception:
+                    continue
+            self._cache[acc] = res
+        return self._cache[acc]
+
+    def nearby(self, acc, pos):
+        p2i, dm = self._get(acc)
+        if dm is None:
+            return []
+        idx = p2i.get(pos)
+        if idx is None:
+            return []
+        pos_arr = np.array(list(p2i.keys()), dtype=np.int32)
+        idx_arr = np.array(list(p2i.values()), dtype=np.int32)
+        d = dm[idx][idx_arr]
+        mask = (d > 0) & (d < self.thr) & (pos_arr != pos)
+        return pos_arr[mask].tolist()
+
+
 def main():
     ap = argparse.ArgumentParser()
     scratch = '/scratch/leduc.an/AAS_Evo'
     ap.add_argument('--missense', default=f'{scratch}/ANALYSIS/all_missense_with_spurs.tsv')
     ap.add_argument('--tmt-map', default=str(REPO_DIR / 'metadata/PDC_meta/pdc_file_tmt_map.tsv'))
     ap.add_argument('--gdc-meta', default=str(REPO_DIR / 'metadata/GDC_meta/gdc_meta_matched.tsv'))
+    ap.add_argument('--ref-fasta', default=f'{scratch}/SEQ_FILES/uniprot_human_canonical.fasta')
+    ap.add_argument('--contact-dir', default=f'{scratch}/SPURS/contact_maps')
+    ap.add_argument('--ddg-dir', default=f'{scratch}/SPURS/ddg_matrices')
     ap.add_argument('-o', '--out-dir', default=f'{scratch}/ANALYSIS/eve_aas_targets')
     ap.add_argument('--min-patients', type=int, default=3)
     ap.add_argument('--vaf-threshold', type=float, default=0.3)
+    ap.add_argument('--dist-threshold', type=float, default=3.0)
+    ap.add_argument('--min-seq-sep', type=int, default=30)
     args = ap.parse_args()
 
     out = Path(args.out_dir)
@@ -82,7 +156,6 @@ def main():
     print(f'  {len(processed_uuids):,} genomics samples | '
           f'{len(miss):,} missense rows | {miss["M"].nunique():,} unique missense')
 
-    # uuid -> set of missense
     uuid_missense = defaultdict(set)
     for uid, M in zip(miss['sample_id'], miss['M']):
         uuid_missense[uid].add(M)
@@ -95,7 +168,7 @@ def main():
     plex_uuids = build_plex_uuidsets(tmt, gdc, processed_uuids)
     print(f'  {len(plex_uuids)} TMT sets with genomics')
 
-    # per-set count of testable missense (>=k carriers AND >=k non-carriers)
+    # ── Panel A: per-set testable missense ──────────────────────────────────
     per_set = []
     testable_pairs = 0
     testable_missense = set()
@@ -115,36 +188,93 @@ def main():
 
     ps = pd.DataFrame(per_set).sort_values('n_testable', ascending=False)
     ps.to_csv(out / 'testable_missense_per_set.tsv', sep='\t', index=False)
-
     counts = ps['n_testable'].values
-    print('\n' + '=' * 56)
-    print(f'TESTABLE MISSENSE per TMT set  (>= {k} carriers AND >= {k} non-carriers)')
-    print('=' * 56)
-    print(f'TMT sets                         : {len(ps)}')
-    print(f'  with >= 1 testable missense    : {(counts > 0).sum()}')
-    print(f'testable missense per set  min/median/mean/max : '
-          f'{counts.min()} / {np.median(counts):.1f} / {counts.mean():.1f} / {counts.max()}')
-    print(f'testable (missense, set) pairs   : {testable_pairs:,}')
-    print(f'unique missense testable in >=1 set : {len(testable_missense):,}')
-    print(f'\nTop sets:\n{ps.head(10).to_string(index=False)}')
 
-    # histogram over TMT sets
-    fig, ax = plt.subplots(figsize=(8, 5))
+    print('\n' + '=' * 60)
+    print(f'PANEL A — testable missense per TMT set (>= {k}c AND >= {k}nc)')
+    print('=' * 60)
+    print(f'TMT sets                          : {len(ps)}')
+    print(f'  with >= 1 testable missense     : {(counts > 0).sum()}')
+    print(f'per set  min/median/mean/max      : '
+          f'{counts.min()} / {np.median(counts):.1f} / {counts.mean():.1f} / {counts.max()}')
+    print(f'testable (missense, set) pairs    : {testable_pairs:,}')
+    print(f'unique missense testable in >=1 set : {len(testable_missense):,}')
+
+    # ── Panel B: contact candidates for the testable subset ─────────────────
+    print('\nLoading contact maps / gene->acc ...', flush=True)
+    gene_to_acc = build_gene_to_acc(args.ref_fasta, args.ddg_dir)
+    contacts = ContactMaps(args.contact_dir, args.dist_threshold)
+
+    rows = []
+    n_no_acc = n_no_map = 0
+    for (gene, pos, wt, alt) in testable_missense:
+        acc = gene_to_acc.get(gene)
+        if not acc:
+            n_no_acc += 1
+            rows.append((gene, pos, wt, alt, '', 0, False, False))
+            continue
+        if not contacts.has(acc):
+            n_no_map += 1
+            rows.append((gene, pos, wt, alt, acc, 0, False, False))
+            continue
+        nearby = contacts.nearby(acc, pos)
+        n_far = sum(1 for j in nearby if abs(j - pos) >= args.min_seq_sep)
+        rows.append((gene, pos, wt, alt, acc, n_far, True, n_far > 0))
+
+    cm = pd.DataFrame(rows, columns=['gene', 'pos', 'wt', 'alt', 'acc',
+                                     'n_contacts_ge_sep', 'has_map', 'has_candidate'])
+    cm.to_csv(out / 'testable_missense_contacts.tsv', sep='\t', index=False)
+
+    n_tot = len(cm)
+    n_map = int(cm['has_map'].sum())
+    n_cand = int(cm['has_candidate'].sum())
+    far_counts = cm.loc[cm['has_map'], 'n_contacts_ge_sep'].values
+    print('\n' + '=' * 60)
+    print(f'PANEL B — contact candidates (Ca-Ca < {args.dist_threshold}A, '
+          f'>= {args.min_seq_sep} aa away) for testable missense')
+    print('=' * 60)
+    print(f'testable missense                 : {n_tot:,}')
+    print(f'  no gene->acc mapping            : {n_no_acc:,}')
+    print(f'  no AlphaFold contact map        : {n_no_map:,}')
+    print(f'  with contact map                : {n_map:,}')
+    print(f'  with >= 1 long-range candidate  : {n_cand:,}  '
+          f'({100 * n_cand / n_tot:.1f}% of testable)')
+    if len(far_counts):
+        print(f'candidates/missense (mapped) min/median/mean/max : '
+              f'{far_counts.min()} / {np.median(far_counts):.1f} / '
+              f'{far_counts.mean():.1f} / {far_counts.max()}')
+
+    # ── figure: two panels ──────────────────────────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
     hi = int(counts.max()) if len(counts) and counts.max() > 0 else 1
-    bins = np.arange(0, hi + 2) - 0.5
-    ax.hist(counts, bins=bins, color='#1f77b4', edgecolor='white')
-    ax.set_xlabel(f'# missense with >= {k} carriers AND >= {k} non-carriers in the set')
-    ax.set_ylabel('# TMT sets')
-    ax.set_title(f'Per-TMT-set count of {k}v{k}-testable missense mutations\n'
-                 f'({len(ps)} sets; {testable_pairs:,} testable (missense,set) pairs)')
-    ax.axvline(counts.mean(), color='k', ls='--', lw=1,
-               label=f'mean = {counts.mean():.1f}')
-    ax.legend()
+    axes[0].hist(counts, bins=np.arange(0, hi + 2) - 0.5,
+                 color='#1f77b4', edgecolor='white')
+    axes[0].axvline(counts.mean(), color='k', ls='--', lw=1,
+                    label=f'mean = {counts.mean():.1f}')
+    axes[0].set_xlabel(f'# missense with >= {k} carriers AND >= {k} non-carriers')
+    axes[0].set_ylabel('# TMT sets')
+    axes[0].set_title(f'A. {k}v{k}-testable missense per TMT set\n'
+                      f'({len(ps)} sets; {testable_pairs:,} testable (missense,set) pairs)')
+    axes[0].legend()
+
+    if len(far_counts):
+        cap = min(int(far_counts.max()), 40)
+        clipped = np.clip(far_counts, 0, cap)
+        axes[1].hist(clipped, bins=np.arange(0, cap + 2) - 0.5,
+                     color='#2ca02c', edgecolor='white')
+        axes[1].set_xlabel(f'# contact positions >= {args.min_seq_sep} aa away '
+                           f'(clipped at {cap})')
+        axes[1].set_ylabel('# testable missense (with contact map)')
+        axes[1].set_title(f'B. AAS candidate sites per testable missense\n'
+                          f'{n_cand:,}/{n_tot:,} have >=1 candidate; '
+                          f'{n_no_map:,} lack a contact map')
     plt.tight_layout()
-    png = out / 'testable_missense_per_set.png'
+    png = out / 'testable_missense_feasibility.png'
     plt.savefig(png, dpi=150, bbox_inches='tight')
     plt.savefig(png.with_suffix('.pdf'), bbox_inches='tight')
-    print(f'\nWrote -> {png}\n        {out}/testable_missense_per_set.tsv')
+    print(f'\nWrote -> {png}\n        {out}/testable_missense_per_set.tsv'
+          f'\n        {out}/testable_missense_contacts.tsv')
 
 
 if __name__ == '__main__':
