@@ -2,6 +2,8 @@
 
 Multi-omics data pipeline for CPTAC3 (Clinical Proteomic Tumor Analysis Consortium). Downloads and processes matched genomics (WXS BAM files from GDC) and proteomics (TMT-labeled RAW files from PDC) data for integrated analysis of amino acid substitutions.
 
+**Current focus:** given a genomic missense mutation, find aberrant amino acid substitutions (AAS, i.e. translation errors) at structurally proximal positions whose combination with the missense is predicted to be strongly interacting — synergistic or aggravating — versus null. Candidate AAS positions come from AlphaFold contact maps; the interaction is scored with **EVE double-mutant predictions** (epistasis = `dmm − (missense_single + swap_single)`). Detected AAS are read out as the within-TMT-set carrier vs non-carrier RAAS delta. Missense stability (AlphaMissense, SPURS ddG) is retained as *annotation*, not a selection filter.
+
 ## Repository Structure
 
 ```
@@ -45,8 +47,8 @@ AAS_Evo/
 │   │   ├── submit_variant_call.sh       # SLURM array: variant calling
 │   │   ├── submit_vep.sh               # SLURM array: VEP annotation + AlphaMissense
 │   │   └── consolidate_missense.sh      # Merge missense mutations
-│   ├── mutation_analysis/               # Filtering, SPURS, MSA generation & coevolution
-│   │   ├── filter_and_rank.py
+│   ├── mutation_analysis/               # SPURS, AAS target selection, MSA/coevolution
+│   │   ├── select_eve_aas_targets.py    # EVE-epistasis AAS target selection (contact-narrowed)
 │   │   ├── spurs_predict_per_gene.py    # SPURS ddG stability predictions (+ pLDDT extraction)
 │   │   ├── submit_spurs_scores.sh       # SLURM array job for SPURS
 │   │   ├── add_spurs_to_missense_table.py  # Merge spurs_ddg into missense table
@@ -63,16 +65,19 @@ AAS_Evo/
 │   ├── fasta_gen/                       # Custom proteogenomics FASTAs
 │   │   ├── generate_mutant_fastas.py
 │   │   ├── combine_plex_fastas.py
+│   │   ├── generate_contact_saap_fastas.py  # Per-plex FASTAs of contact-proximal SAAP candidates
 │   │   ├── generate_compensatory_fastas.py
 │   │   ├── submit_compensatory_fastas.sh
 │   │   └── submit_proteogenomics.sh
-│   └── ms_search/                       # FragPipe MS database search
-│       └── fragpipe/
-│           ├── run_ms_search.sh         # Orchestrator: setup + submit SLURM array
-│           ├── generate_manifests.py    # Generate per-plex manifests + patch workflows
-│           ├── add_decoys.py            # Append rev_ decoy sequences to FASTAs
-│           ├── submit_fragpipe.sh       # SLURM array job (one plex per task)
-│           └── validation.ipynb        # Channel enrichment validation notebook
+│   ├── ms_search/                       # FragPipe MS database search
+│   │   └── fragpipe/
+│   │       ├── run_ms_search.sh         # Orchestrator: setup + submit SLURM array
+│   │       ├── generate_manifests.py    # Generate per-plex manifests + patch workflows
+│   │       ├── add_decoys.py            # Append rev_ decoy sequences to FASTAs
+│   │       ├── submit_fragpipe.sh       # SLURM array job (one plex per task)
+│   │       ├── submit_fragpipe_contact.sh   # Same, for the contact-SAAP FASTAs/results
+│   │       └── validation/              # Analysis notebooks (contact_saap_analysis.ipynb, ...)
+│   └── _retired/                        # Superseded scripts (filter_and_rank.py, maxquant, ...)
 └── .claude/
     └── CLAUDE.md                        # Detailed project context
 ```
@@ -129,30 +134,31 @@ AAS_Evo/
 ## Pipeline Overview
 
 ```
-Download BAMs → Variant Call → VEP (+ AlphaMissense) → Consolidate
-    ↓                                                       ↓
-    ↓                                           All Missense Mutations
-    ↓                                                       ↓
-    ↓                               SPURS ddG Predictions (per gene, + pLDDT)
-    ↓                                                       ↓
-    ↓                               Unique Missense Table (gene×swap, with scores)
-    ↓                                                       ↓
-    ↓                               SAAP Co-occurrence Analysis (Tsour et al.)
-    ↓                                   ↓                   ↓
-    ↓                            AM Score Analysis    EVCouplings Check
-    ↓                                                       ↓
-Filter & Rank (top 5000)                      Per-Sample Mutant FASTAs
-    ↓                                                       ↓
-Generate MSAs (MMseqs2)                                     ↓
-    ↓                                                       ↓
-Coevolution Analysis                                        ↓
-    ↓                                                       ↓
-Compensatory FASTAs ─────────────────────────────────────→  ↓
-                                                            ↓
-                              Combine Per-Plex FASTAs (ref + observed + compensatory)
-                                                            ↓
-                                              FragPipe MS Search (per plex)
+Download BAMs → Variant Call → VEP (+ AlphaMissense) → Consolidate → All Missense Mutations
+                                                                            │
+              ┌──────────────────────────────────────────────────────────────┤
+              │                                                              │
+   SPURS ddG (per gene, +pLDDT)                          AlphaFold contact maps
+       (annotation only)                                          │
+              │                                       Contact-proximal AAS candidates
+              │                                                    │
+              │                          EVE double-mutant epistasis scoring, two arms:
+              │                          synergistic / deleterious / null
+              │                          (select_eve_aas_targets.py)
+              │                                                    │
+              └──────────────────►  Per-plex contact-SAAP FASTAs  ◄┘
+                                    (generate_contact_saap_fastas.py)
+                                                 │
+                                    FragPipe MS Search (per plex)
+                                                 │
+                       Within-TMT-set carrier vs non-carrier RAAS delta
+                                    (contact_saap_analysis.ipynb)
 ```
+
+**Retained (secondary) branches**, kept but no longer the primary path:
+- SAAP co-occurrence vs the Tsour et al. dataset + EVCouplings check (`saap_*` scripts).
+- In-house MSA + coevolution compensatory prediction (`generate_msas` → `coevolution_analysis` → compensatory FASTAs) — **superseded as the compensation signal by EVE double-mutant predictions.**
+- Composite stability ranking (`filter_and_rank.py`) — moved to `scripts/_retired/`; missense stability is now annotation, not a selection axis.
 
 ## Workflows
 
@@ -226,20 +232,16 @@ VCF/VEP outputs persist across chunks in their subdirectories. Both scripts skip
 
 **Final output** (`all_missense_mutations.tsv`, 18 columns): sample_id, genomic position, consequence, gene symbol, protein change (HGVSp), amino acid swap, gnomADe_AF, AlphaMissense pathogenicity + class, read depths, VAF.
 
-### 4. Consolidate & Filter Mutations
+### 4. Consolidate Mutations
 
 ```bash
 # After ALL chunks are processed: merge per-sample VEP TSVs
 bash scripts/proc_bams/consolidate_missense.sh
-
-# Rank mutations by composite pathogenicity score (AlphaMissense, gnomAD, recurrence)
-python3 scripts/mutation_analysis/filter_and_rank.py \
-    --vep-tsv /scratch/leduc.an/AAS_Evo/VEP/all_missense_mutations.tsv \
-    --ref-fasta /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
-    -o /scratch/leduc.an/AAS_Evo/ANALYSIS
 ```
 
-Output: `ANALYSIS/top_5000_mutations.tsv`, `ANALYSIS/gene_list_for_msa.txt` (used automatically by downstream steps).
+Output: `VEP/all_missense_mutations.tsv` (18 columns). Merge SPURS scores in (§5) to get `ANALYSIS/all_missense_with_spurs.tsv`, the working table for AAS targeting.
+
+> The old composite pathogenicity ranking (`filter_and_rank.py`, top-5000 by AM/gnomAD/recurrence) is retired to `scripts/_retired/` — missense stability is now annotation, not a selection axis. Retrieve it from there if you still want a stability-ranked gene list for the MSA/coevolution branch.
 
 ### 5. SPURS Stability Predictions
 
@@ -313,7 +315,32 @@ srun ... python scripts/mutation_analysis/saap_evcoupling_analysis.py
 
 EVChits files are located at `/projects/marubi/collabs/slavov_rna/evcouplings_files/EVChits/` on Discovery. Each file (`ENSP*_EVChits.csv`) contains evolutionary coupling pairs for SAAP positions in that protein, with `mad_score` and `probability` columns as confidence metrics.
 
-### 6. MSA Generation
+### 5c. Contact-SAAP + EVE-epistasis AAS Targeting (current primary path)
+
+Selects AAS translation-error targets that EVE predicts will interact strongly — or not at all — with an observed missense, then searches for them by MS and reads out the within-TMT-set carrier vs non-carrier RAAS delta.
+
+**Inputs**: `all_missense_with_spurs.tsv`, AlphaFold contact maps (`SPURS/contact_maps/`), and EVE double-mutant matrices at `/projects/marubi/collabs/slavov_rna/aa_mut_preds/eve_alns_double_muts/destab/` (`destab_{ENSP}_{ACC}_b{beta}_double_mutant_matrix.csv`; long format `i, aa_i, j, aa_j, i_score, j_score, dmm_score`, more negative = more deleterious).
+
+```bash
+# Select AAS target arms (contacts narrow candidates, EVE scores epistasis)
+#   epistasis = dmm_score - (missense_single + swap_single)
+#   arms: 2500 synergistic (+ep) / 2500 deleterious (-ep) / 5000 null (|ep|~0)
+#   eligibility: missense with >=2 carrier & >=2 non-carrier channels in >=1 TMT set
+python3 scripts/mutation_analysis/select_eve_aas_targets.py
+# Outputs (ANALYSIS/eve_aas_targets/):
+#   eve_aas_targets.tsv          arm-labeled (missense, AAS) pairs  [Stage 1, precomputed EVE]
+#   eve_aas_candidates.tsv       all scored candidates
+#   eve_proteins_to_compute.tsv  proteins with eligible missense + contacts but no EVE matrix [Stage 2]
+#   selection_summary.txt
+```
+
+EVE double-mutant matrices are **precomputed for only ~84 proteins**, so Stage 1 arms come mostly from a few dozen genes; `eve_proteins_to_compute.tsv` is the run-EVE list to expand coverage (Stage 2 — re-running the selector folds new matrices in automatically).
+
+The per-plex contact-SAAP FASTAs and their FragPipe search are generated by `generate_contact_saap_fastas.py` and `submit_fragpipe_contact.sh` (results in `MS_SEARCH/results_contact/`). The readout — carrier vs non-carrier RAAS delta computed **within each TMT set**, versus EVE epistasis — lives in `scripts/ms_search/fragpipe/validation/contact_saap_analysis.ipynb`.
+
+> **Gotcha**: the carrier vs non-carrier RAAS delta must be computed within a plex first, then averaged across plexes. Pooling channels across TMT sets mixes batches and *inverts* the sign of the EVE-epistasis correlation.
+
+### 6. MSA Generation (secondary — in-house coevolution branch)
 
 ```bash
 # Submit MSA generation (auto-finds gene list from ANALYSIS/)
