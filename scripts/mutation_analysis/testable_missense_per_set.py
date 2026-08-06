@@ -60,6 +60,8 @@ def build_gene_to_acc(ref_fasta, ddg_dir):
             parts = f.name.split('.')
             if len(parts) >= 2:
                 g2a[parts[1]] = parts[0]
+    if not (ref_fasta and Path(ref_fasta).exists()):
+        return g2a
     with open(ref_fasta) as fh:
         for line in fh:
             if line.startswith('>'):
@@ -244,31 +246,34 @@ def main():
               f'{far_counts.min()} / {np.median(far_counts):.1f} / '
               f'{far_counts.mean():.1f} / {far_counts.max()}')
 
-    # ── figure: two panels ──────────────────────────────────────────────────
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
+    # ── figure: Panel A (+ Panel B if contacts available) ───────────────────
+    two = len(far_counts) > 0
+    fig, axes = plt.subplots(1, 2 if two else 1,
+                             figsize=(14, 5) if two else (8, 5), squeeze=False)
+    axA = axes[0][0]
     hi = int(counts.max()) if len(counts) and counts.max() > 0 else 1
-    axes[0].hist(counts, bins=np.arange(0, hi + 2) - 0.5,
-                 color='#1f77b4', edgecolor='white')
-    axes[0].axvline(counts.mean(), color='k', ls='--', lw=1,
-                    label=f'mean = {counts.mean():.1f}')
-    axes[0].set_xlabel(f'# missense with >= {k} carriers AND >= {k} non-carriers')
-    axes[0].set_ylabel('# TMT sets')
-    axes[0].set_title(f'A. {k}v{k}-testable missense per TMT set\n'
-                      f'({len(ps)} sets; {testable_pairs:,} testable (missense,set) pairs)')
-    axes[0].legend()
+    axA.hist(counts, bins=np.arange(0, hi + 2) - 0.5,
+             color='#1f77b4', edgecolor='white')
+    axA.axvline(counts.mean(), color='k', ls='--', lw=1,
+                label=f'mean = {counts.mean():.1f}')
+    axA.set_xlabel(f'# missense with >= {k} carriers AND >= {k} non-carriers')
+    axA.set_ylabel('# TMT sets')
+    axA.set_title(f'A. {k}v{k}-testable missense per TMT set\n'
+                  f'({len(ps)} sets; {testable_pairs:,} testable (missense,set) pairs)')
+    axA.legend()
 
-    if len(far_counts):
+    if two:
+        axB = axes[0][1]
         cap = min(int(far_counts.max()), 40)
         clipped = np.clip(far_counts, 0, cap)
-        axes[1].hist(clipped, bins=np.arange(0, cap + 2) - 0.5,
-                     color='#2ca02c', edgecolor='white')
-        axes[1].set_xlabel(f'# contact positions >= {args.min_seq_sep} aa away '
-                           f'(clipped at {cap})')
-        axes[1].set_ylabel('# testable missense (with contact map)')
-        axes[1].set_title(f'B. AAS candidate sites per testable missense\n'
-                          f'{n_cand:,}/{n_tot:,} have >=1 candidate; '
-                          f'{n_no_map:,} lack a contact map')
+        axB.hist(clipped, bins=np.arange(0, cap + 2) - 0.5,
+                 color='#2ca02c', edgecolor='white')
+        axB.set_xlabel(f'# contact positions >= {args.min_seq_sep} aa away '
+                       f'(clipped at {cap})')
+        axB.set_ylabel('# testable missense (with contact map)')
+        axB.set_title(f'B. AAS candidate sites per testable missense\n'
+                      f'{n_cand:,}/{n_tot:,} have >=1 candidate; '
+                      f'{n_no_map:,} lack a contact map')
     plt.tight_layout()
     png = out / 'testable_missense_feasibility.png'
     plt.savefig(png, dpi=150, bbox_inches='tight')
