@@ -174,6 +174,7 @@ def main():
     per_set = []
     testable_pairs = 0
     testable_missense = set()
+    obs_carr, obs_nonc = [], []
     for plex_id, uuids in plex_uuids.items():
         n = len(uuids)
         carrier_count = Counter()
@@ -182,11 +183,16 @@ def main():
                 carrier_count[M] += 1
         cnt = 0
         for M, c in carrier_count.items():
-            if c >= k and (n - c) >= k:
+            nc = n - c
+            obs_carr.append(c)
+            obs_nonc.append(nc)
+            if c >= k and nc >= k:
                 cnt += 1
                 testable_pairs += 1
                 testable_missense.add(M)
         per_set.append({'plex_id': plex_id, 'n_channels': n, 'n_testable': cnt})
+    obs_carr = np.array(obs_carr)
+    obs_nonc = np.array(obs_nonc)
 
     ps = pd.DataFrame(per_set).sort_values('n_testable', ascending=False)
     ps.to_csv(out / 'testable_missense_per_set.tsv', sep='\t', index=False)
@@ -230,6 +236,36 @@ def main():
     figc.savefig(out / 'samples_per_set.png', dpi=150, bbox_inches='tight')
     plt.close(figc)
     print(f'Wrote -> {out}/samples_per_set.png')
+
+    # ── breakdown: carrier / non-carrier counts across ALL (missense, set) ──
+    print('\n' + '-' * 60)
+    print('BREAKDOWN over ALL (missense, set) observations (missense present)')
+    print('-' * 60)
+    tot = len(obs_carr)
+    print(f'(missense, set) observations       : {tot:,}')
+    print(f'{"threshold":>9} | {">= carriers":>12} | {">= non-carriers":>15}')
+    for t in [1, 2, 3, 4, 5]:
+        print(f'{t:>9} | {int((obs_carr >= t).sum()):>12,} | '
+              f'{int((obs_nonc >= t).sum()):>15,}')
+    print(f'>= {k} carriers AND >= {k} non-carriers : {testable_pairs:,}')
+
+    figd, axd = plt.subplots(1, 2, figsize=(14, 5))
+    for ax, data, lab, col in [
+            (axd[0], obs_carr, 'carriers', '#d62728'),
+            (axd[1], obs_nonc, 'non-carriers', '#1f77b4')]:
+        cap = min(int(data.max()) if len(data) else 1, 12)
+        ax.hist(np.clip(data, 0, cap), bins=np.arange(0, cap + 2) - 0.5,
+                color=col, edgecolor='white')
+        ax.axvline(k, color='k', ls='--', lw=1.2, label=f'threshold = {k}')
+        ax.set_xlabel(f'# {lab} in the set (clipped at {cap})')
+        ax.set_ylabel('# (missense, set) observations (log)')
+        ax.set_title(f'{lab} per (missense, set)')
+        ax.set_yscale('log')
+        ax.legend()
+    plt.tight_layout()
+    figd.savefig(out / 'carrier_breakdown.png', dpi=150, bbox_inches='tight')
+    plt.close(figd)
+    print(f'Wrote -> {out}/carrier_breakdown.png')
 
     # ── Panel B: contact candidates for the testable subset ─────────────────
     print('\nLoading contact maps / gene->acc ...', flush=True)
