@@ -202,6 +202,35 @@ def main():
     print(f'testable (missense, set) pairs    : {testable_pairs:,}')
     print(f'unique missense testable in >=1 set : {len(testable_missense):,}')
 
+    # ── sanity: genomics-processed samples per TMT set ──────────────────────
+    n_plex_total = tmt['run_metadata_id'].nunique()
+    nch = ps['n_channels'].values
+    print('\n' + '-' * 60)
+    print('GENOMICS SAMPLES PER TMT SET (coverage sanity check)')
+    print('-' * 60)
+    print(f'TMT sets in map                   : {n_plex_total}')
+    print(f'  with >= 1 genomics sample       : {len(ps)}')
+    print(f'  with >= 6 (min for a 3v3 split) : {(nch >= 6).sum()}')
+    print(f'genomics samples/set min/median/mean/max : '
+          f'{nch.min()} / {np.median(nch):.1f} / {nch.mean():.1f} / {nch.max()}')
+    print('top sets by genomics samples:')
+    print(ps.sort_values('n_channels', ascending=False)
+            [['plex_id', 'n_channels', 'n_testable']].head(8).to_string(index=False))
+    figc, axc = plt.subplots(figsize=(8, 5))
+    axc.hist(nch, bins=np.arange(0, int(nch.max()) + 2) - 0.5,
+             color='#9467bd', edgecolor='white')
+    axc.axvline(6, color='r', ls='--', lw=1.2, label='3v3 needs >= 6')
+    axc.set_xlabel('# genomics-processed samples (channels) in the set')
+    axc.set_ylabel('# TMT sets')
+    axc.set_title(f'Genomics samples per TMT set\n'
+                  f'({len(ps)}/{n_plex_total} sets have >=1; '
+                  f'{(nch >= 6).sum()} have >=6)')
+    axc.legend()
+    plt.tight_layout()
+    figc.savefig(out / 'samples_per_set.png', dpi=150, bbox_inches='tight')
+    plt.close(figc)
+    print(f'Wrote -> {out}/samples_per_set.png')
+
     # ── Panel B: contact candidates for the testable subset ─────────────────
     print('\nLoading contact maps / gene->acc ...', flush=True)
     gene_to_acc = build_gene_to_acc(args.ref_fasta, args.ddg_dir)
