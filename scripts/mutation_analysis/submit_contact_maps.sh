@@ -23,10 +23,14 @@ REPO_DIR="${REPO_DIR:-/home/leduc.an/AAS_Evo_project/AAS_Evo}"
 cd "$REPO_DIR"
 
 NSHARDS="${NSHARDS:-1}"
+# Compute nodes have no internet: read structures from a locally-staged
+# AlphaFold dir (extract the human bulk tar there first) and never download.
+PDB_DIR="${PDB_DIR:-/scratch/leduc.an/AAS_Evo/SPURS/af_human}"
 
 python3 scripts/mutation_analysis/make_contact_maps.py \
     --missense /projects/slavov/andrew/AAS_EVO/all_missense_mutations.tsv \
     --ref-fasta /scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta \
     --out-dir /scratch/leduc.an/AAS_Evo/SPURS/contact_maps \
     --pdb-cache /scratch/leduc.an/AAS_Evo/SPURS/pdb_cache \
+    --pdb-dir "$PDB_DIR" --no-download \
     --nshards "$NSHARDS"

@@ -27,6 +27,7 @@ arrays via --nshards N (+ SLURM_ARRAY_TASK_ID) or --shard i --nshards N.
 """
 
 import argparse
+import gzip
 import os
 import re
 import sys
@@ -67,6 +68,18 @@ def accs_from_missense(missense, gene_to_acc, vaf_threshold):
     return sorted(accs)
 
 
+def find_local_pdb(acc, dirs, frag=1):
+    """Look for an already-present AlphaFold PDB (plain or gzipped)."""
+    for d in dirs:
+        if not d:
+            continue
+        for ext in ('.pdb', '.pdb.gz'):
+            p = Path(d) / f'AF-{acc}-F{frag}-model_v4{ext}'
+            if p.exists() and p.stat().st_size > 0:
+                return p
+    return None
+
+
 def download_pdb(acc, cache, frag=1):
     dst = cache / f'AF-{acc}-F{frag}-model_v4.pdb'
     if dst.exists() and dst.stat().st_size > 0:
@@ -86,7 +99,8 @@ def parse_pdb(pdb):
     atoms = {}    # resnum -> list of (x,y,z)
     resname = {}  # resnum -> 3-letter
     plddt = {}    # resnum -> B-factor (AlphaFold pLDDT)
-    with open(pdb) as fh:
+    opener = gzip.open if str(pdb).endswith('.gz') else open
+    with opener(pdb, 'rt') as fh:
         for line in fh:
             if not line.startswith('ATOM'):
                 continue
@@ -123,11 +137,13 @@ def min_heavy_atom_matrix(coords):
     return dm
 
 
-def make_one(acc, cache, out_dir):
+def make_one(acc, cache, out_dir, pdb_dir=None, allow_download=True):
     npy = out_dir / f'AF-{acc}-F1.npy'
     if npy.exists():
         return 'skip'
-    pdb = download_pdb(acc, cache)
+    pdb = find_local_pdb(acc, [pdb_dir, cache])
+    if pdb is None and allow_download:
+        pdb = download_pdb(acc, cache)
     if pdb is None:
         return 'no_structure'
     resnums, aa1, coords, pl = parse_pdb(pdb)
@@ -148,6 +164,11 @@ def main():
     ap.add_argument('--acc-list', default=None, help='file with one UniProt acc per line (overrides missense)')
     ap.add_argument('--out-dir', default=f'{scratch}/SPURS/contact_maps')
     ap.add_argument('--pdb-cache', default=f'{scratch}/SPURS/pdb_cache')
+    ap.add_argument('--pdb-dir', default=None,
+                    help='directory of local AlphaFold PDBs (AF-{acc}-F1-model_v4.pdb[.gz]); '
+                         'searched before any download')
+    ap.add_argument('--no-download', action='store_true',
+                    help='never fetch from the network (use only local PDBs; for compute nodes)')
     ap.add_argument('--vaf-threshold', type=float, default=0.3)
     ap.add_argument('--nshards', type=int, default=1)
     ap.add_argument('--shard', type=int, default=None,
@@ -175,7 +196,8 @@ def main():
     tally = {}
     for i, acc in enumerate(accs):
         try:
-            r = make_one(acc, cache, out_dir)
+            r = make_one(acc, cache, out_dir, pdb_dir=args.pdb_dir,
+                         allow_download=not args.no_download)
         except Exception as e:
             r = 'error'
             print(f'  {acc}: ERROR {e}', file=sys.stderr, flush=True)
