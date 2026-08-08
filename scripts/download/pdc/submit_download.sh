@@ -25,6 +25,11 @@ set -e
 # Load Python module (required on compute nodes)
 module load python/3.8.1 2>/dev/null || true
 
+# Compute nodes reach the internet (incl. PDC CloudFront URLs) via the site
+# HTTP proxy; requests honours these env vars. Override HTTP_PROXY_URL if needed.
+PROXY="${HTTP_PROXY_URL:-http://10.99.0.130:3128}"
+export http_proxy="$PROXY" https_proxy="$PROXY"
+
 # Project paths
 SCRIPTS_DIR="/home/leduc.an/AAS_Evo_project/AAS_Evo"
 META_DIR="${SCRIPTS_DIR}/metadata"
