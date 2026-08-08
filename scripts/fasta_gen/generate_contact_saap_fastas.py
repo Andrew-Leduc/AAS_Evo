@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
 Generate per-plex FASTAs containing predicted SAAP candidates at positions
-structurally proximal (<4Å Cα-Cα) to destabilizing missense mutations.
+structurally proximal to missense mutations that are testable in that plex.
 
 For each TMT plex:
-  1. Find destabilizing missense mutations in patients in that plex
-     (AM>=0.564 OR SPURS>=0.5, rare gnomAD<0.01, VAF>=0.3)
-  2. For each missense at position i, find all positions j with CA-CA < DIST_THRESHOLD
-  3. Add all 19 possible AA swaps at position j as tryptic peptides
-  4. Add equal-sized random neutral missense sample (AM<0.1, gnomAD>0.1) with
-     their proximal positions as negative control
-  5. Write per-plex FASTA for FragPipe search
+  1. Find missense mutations that are 3v3-TESTABLE in that plex: >= --min-carrier
+     carrier channels AND >= --min-noncarrier non-carrier channels (VAF>=0.3).
+     No stability (AM/SPURS) filter — EVE is applied later at analysis time.
+  2. For each missense at position i, find positions j with Ca-Ca < DIST_THRESHOLD
+     and at least MIN_SEQ_SEP residues away in sequence.
+  3. Add ALL allowed AA swaps at position j as tryptic peptides (excluding K/R,
+     isobaric, and M-modification confounds; dropping canonical peptides).
+  4. Write per-plex search FASTA = reference proteome + those swap peptides, plus
+     a manifest of (missense -> contact site, carrier/non-carrier counts).
 
-Output headers: >contact_pred|{ACC}|{GENE}|{SWAP}|{source}|{patient}|{sample_type}
+Output headers: >sp|{ACC}-{SWAP}-{HASH}|{GENE}-contact ... GN={GENE} ...
 """
 
 import argparse
@@ -75,10 +77,10 @@ GNOMAD_NEUTRAL  = 0.1
 GNOMAD_MAX      = 0.01
 VAF_THRESHOLD   = 0.3
 DIST_THRESHOLD  = 3.0   # Å Cα-Cα
-MIN_SEQ_SEP     = 21    # min AA separation between contact pos and missense pos
+MIN_SEQ_SEP     = 30    # min AA separation between contact pos and missense pos
 
 DEFAULTS = dict(
-    missense   = "/scratch/leduc.an/AAS_Evo/ANALYSIS/all_missense_with_spurs.tsv",
+    missense   = "/projects/slavov/andrew/AAS_EVO/all_missense_mutations.tsv",
     ref_fasta  = "/scratch/leduc.an/AAS_Evo/SEQ_FILES/uniprot_human_canonical.fasta",
     contact_dir= "/scratch/leduc.an/AAS_Evo/SPURS/contact_maps",
     ddg_dir    = "/scratch/leduc.an/AAS_Evo/SPURS/ddg_matrices",
@@ -95,6 +97,8 @@ def parse_args():
         ap.add_argument(f"--{k.replace('_','-')}", default=v)
     ap.add_argument("--dist", type=float, default=DIST_THRESHOLD)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--min-carrier", type=int, default=3)
+    ap.add_argument("--min-noncarrier", type=int, default=3)
     return ap.parse_args()
 
 
@@ -268,52 +272,48 @@ def main():
     case_sample_to_uuid = (gdc.set_index(["case_submitter_id","sample_type"])
                            ["gdc_file_id"].to_dict())
 
-    with open(args.plex_list) as f:
-        plex_ids = [l.strip() for l in f if l.strip()]
+    if Path(args.plex_list).exists():
+        with open(args.plex_list) as f:
+            plex_ids = [l.strip() for l in f if l.strip()]
+    else:
+        plex_ids = sorted(tmt["run_metadata_id"].dropna().astype(str).unique())
+        print(f"  (plex_list not found; using all {len(plex_ids)} plexes from TMT map)",
+              flush=True)
     print(f"  {len(plex_ids)} plexes", flush=True)
 
     print("Loading missense table...", flush=True)
     miss = pd.read_csv(args.missense, sep="\t", low_memory=False,
-                       usecols=["sample_id","SYMBOL","Protein_position",
-                                "Amino_acids","VAF","gnomADe_AF",
-                                "am_pathogenicity","spurs_ddg"])
-    miss["VAF"]            = pd.to_numeric(miss["VAF"],            errors="coerce")
-    miss["gnomADe_AF"]     = pd.to_numeric(miss["gnomADe_AF"],     errors="coerce").fillna(0)
-    miss["am_pathogenicity"]= pd.to_numeric(miss["am_pathogenicity"], errors="coerce")
-    miss["spurs_ddg"]      = pd.to_numeric(miss["spurs_ddg"],      errors="coerce")
-    miss["pos"]            = pd.to_numeric(
+                       usecols=["sample_id", "SYMBOL", "Protein_position",
+                                "Amino_acids", "VAF"])
+    miss["VAF"] = pd.to_numeric(miss["VAF"], errors="coerce")
+    miss = miss[miss["VAF"] >= VAF_THRESHOLD]
+    miss["pos"] = pd.to_numeric(
         miss["Protein_position"].astype(str).str.split("-").str[0], errors="coerce")
+    aa = miss["Amino_acids"].astype(str).str.split("/", expand=True)
+    miss["wt"]  = aa[0].str.strip()
+    miss["alt"] = aa[1].str.strip() if aa.shape[1] > 1 else None
+    miss = miss.dropna(subset=["SYMBOL", "pos", "wt", "alt"])
+    miss = miss[(miss["wt"].str.len() == 1) & (miss["alt"].str.len() == 1)]
+    miss["pos"] = miss["pos"].astype(int)
+    processed_uuids = set(miss["sample_id"].unique())
+    print(f"  {len(miss):,} VAF>={VAF_THRESHOLD} missense rows "
+          f"({len(processed_uuids):,} genomics samples)", flush=True)
 
-    base_ok   = (miss["VAF"] >= VAF_THRESHOLD) & (miss["gnomADe_AF"] < GNOMAD_MAX)
-    am_pos    = miss["am_pathogenicity"] >= AM_THRESHOLD
-    spurs_pos = miss["spurs_ddg"]        >= SPURS_THRESHOLD
-    destab    = miss[(am_pos | spurs_pos) & base_ok].copy()
-    neutral   = miss[(miss["am_pathogenicity"] <= AM_BENIGN_MAX) &
-                     (miss["gnomADe_AF"] >= GNOMAD_NEUTRAL)].copy()
-
-    print(f"  Destab: {len(destab):,} | Neutral: {len(neutral):,}", flush=True)
-
-    # Pre-filter to only sample_ids that appear in any plex (avoids 10M groupby)
+    # restrict to sample_ids that appear in any plex (avoids scanning all patients)
     all_plex_uuids = set(gdc.loc[gdc["case_submitter_id"].isin(
-        tmt[tmt["run_metadata_id"].isin(plex_ids)]["case_submitter_id"]), "gdc_file_id"])
-    destab  = destab[destab["sample_id"].isin(all_plex_uuids)]
-    neutral = neutral[neutral["sample_id"].isin(all_plex_uuids)]
-    print(f"  After plex filter — Destab: {len(destab):,} | Neutral: {len(neutral):,}", flush=True)
+        tmt[tmt["run_metadata_id"].isin(plex_ids)]["case_submitter_id"]),
+        "gdc_file_id"])
+    miss = miss[miss["sample_id"].isin(all_plex_uuids)]
+    print(f"  {len(miss):,} on plex patients", flush=True)
 
     gene_to_acc = build_gene_to_acc(args.ddg_dir)
     for gene, acc in gene2acc.items():
-        if gene not in gene_to_acc:
-            gene_to_acc[gene] = acc
+        gene_to_acc.setdefault(gene, acc)
 
-    # Pre-build UUID -> sample_type lookup
-    uuid_to_stype = gdc.set_index("gdc_file_id")["sample_type"].to_dict()
+    miss_by_uuid = miss.groupby("sample_id")
 
-    # Pre-index missense by sample_id for fast plex subsetting
-    destab_by_uuid  = destab.groupby("sample_id")
-    neutral_by_uuid = neutral.groupby("sample_id")
-
-    cm_cache    = {}   # acc -> (pos_to_idx, dm)
-    nearby_cache = {}  # (acc, pos) -> list of nearby positions
+    cm_cache     = {}   # acc -> (pos_to_idx, dm)
+    nearby_cache = {}   # (acc, pos) -> nearby positions
 
     TMT_CH_MAP = {
         "tmt_126":"126","tmt_127n":"127N","tmt_127c":"127C",
@@ -322,122 +322,111 @@ def main():
         "tmt_131":"131N","tmt_131c":"131C","tmt_126c":"126C","tmt_134n":"134N",
     }
 
-    print(f"\nGenerating FASTAs for {len(plex_ids)} plexes...", flush=True)
+    ref_text = Path(args.ref_fasta).read_text()
+    if not ref_text.endswith("\n"):
+        ref_text += "\n"
+    combined_dir = Path(args.out_dir).parent / "per_plex_contact"
+    combined_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest = []       # rows describing what was searched
+    n_with_fasta = 0
+
+    print(f"\nGenerating FASTAs for {len(plex_ids)} plexes "
+          f"(>= {args.min_carrier} carriers & >= {args.min_noncarrier} non-carriers, "
+          f"contacts < {args.dist}A, >= {MIN_SEQ_SEP} aa away)...", flush=True)
 
     for pi, plex_id in enumerate(plex_ids):
         if pi % 20 == 0:
-            print(f"  {pi}/{len(plex_ids)} plexes...", flush=True)
+            print(f"  {pi}/{len(plex_ids)} plexes, {n_with_fasta} FASTAs...", flush=True)
 
         pt = tmt[tmt["run_metadata_id"] == plex_id].copy()
         pt["channel"] = pt["tmt_channel"].map(TMT_CH_MAP)
         pt = pt.dropna(subset=["channel"])
-        pt = pt[~pt["case_submitter_id"].str.lower().isin(
+        pt = pt[~pt["case_submitter_id"].astype(str).str.lower().isin(
             ["ref","reference","pooled","pool","nan"])]
 
-        # Map to GDC UUIDs
+        # genomics-processed UUIDs on distinct channels in this plex
         uuids = set()
         for _, r in pt.iterrows():
-            uuid = case_sample_to_uuid.get((r["case_submitter_id"], r["sample_type"]))
-            if uuid:
-                uuids.add(uuid)
-        if not uuids:
+            u = case_sample_to_uuid.get((r["case_submitter_id"], r["sample_type"]))
+            if u and u in processed_uuids:
+                uuids.add(u)
+        n_gen = len(uuids)
+        if n_gen < args.min_carrier + args.min_noncarrier:
             continue
 
-        # Collect unique (gene, pos) pairs from plex patients — faster than per-row
-        def get_unique_gene_pos(uuid_set, groupby_obj):
-            frames = []
-            for uid in uuid_set:
-                if uid in groupby_obj.groups:
-                    frames.append(groupby_obj.get_group(uid))
-            if not frames:
-                return pd.DataFrame()
-            return pd.concat(frames)[["SYMBOL","pos"]].dropna().drop_duplicates()
+        frames = [miss_by_uuid.get_group(u) for u in uuids
+                  if u in miss_by_uuid.groups]
+        if not frames:
+            continue
+        pm = pd.concat(frames)
 
-        destab_gp  = get_unique_gene_pos(uuids, destab_by_uuid)
-        neutral_gp = get_unique_gene_pos(uuids, neutral_by_uuid)
+        # carriers per variant within this plex; keep 3v3-testable ones
+        cc = pm.groupby(["SYMBOL","pos","wt","alt"])["sample_id"].nunique()
+        testable = cc[(cc >= args.min_carrier) &
+                      ((n_gen - cc) >= args.min_noncarrier)]
+        if testable.empty:
+            continue
 
-        # Sample neutral to match destab count
-        if len(neutral_gp) > len(destab_gp):
-            neutral_gp = neutral_gp.sample(len(destab_gp), random_state=args.seed)
-
-        entries = {}  # pep_seq -> (header, pep)
-
-        def process_gene_pos(df, source_tag):
-            for _, row in df.iterrows():
-                gene = str(row["SYMBOL"])
-                pos  = int(row["pos"])
-                acc  = gene_to_acc.get(gene)
-                if not acc or acc not in seqs:
+        entries = {}   # pep -> (header, pep)
+        for (gene, pos, wt, alt), ncarr in testable.items():
+            acc = gene_to_acc.get(gene)
+            if not acc or acc not in seqs:
+                continue
+            seq = seqs[acc]
+            if pos < 1 or pos > len(seq) or seq[pos - 1] != wt:
+                continue
+            if acc not in cm_cache:
+                cm_cache[acc] = load_contact_map(args.contact_dir, acc, seq_len=len(seq))
+            pos_to_idx, dm = cm_cache[acc]
+            if dm is None:
+                continue
+            key = (acc, pos)
+            if key not in nearby_cache:
+                nearby_cache[key] = nearby_positions(pos_to_idx, dm, pos, args.dist)
+            for jpos in nearby_cache[key]:
+                if jpos < 1 or jpos > len(seq) or abs(jpos - pos) < MIN_SEQ_SEP:
                     continue
-                seq = seqs[acc]
-                if pos < 1 or pos > len(seq):
-                    continue
-
-                if acc not in cm_cache:
-                    cm_cache[acc] = load_contact_map(args.contact_dir, acc, seq_len=len(seq))
-                pos_to_idx, dm = cm_cache[acc]
-                if dm is None:
-                    continue
-
-                cache_key = (acc, pos)
-                if cache_key not in nearby_cache:
-                    nearby_cache[cache_key] = nearby_positions(
-                        pos_to_idx, dm, pos, args.dist)
-                nearby = nearby_cache[cache_key]
-                if not nearby:
-                    continue
-
-                for jpos in nearby:
-                    if jpos < 1 or jpos > len(seq):
-                        continue
-                    # Skip if contact position is within max peptide length of the
-                    # missense — they would land in the same tryptic peptide.
-                    if abs(jpos - pos) < MIN_SEQ_SEP:
-                        continue
-                    for header, pep in make_swap_peptides(
-                            seq, acc, gene, jpos,
-                            "tumor", "plex_patient", source_tag,
-                            canonical_peptides=canonical_peptides):
-                        if pep not in entries:
-                            entries[pep] = (header, pep)
-
-        process_gene_pos(destab_gp,  "destab_contact")
-        process_gene_pos(neutral_gp, "neutral_contact")
+                n_added = 0
+                for header, pep in make_swap_peptides(
+                        seq, acc, gene, jpos, "tumor", "plex",
+                        source_tag="contact",
+                        canonical_peptides=canonical_peptides):
+                    if pep not in entries:
+                        entries[pep] = (header, pep)
+                    n_added += 1
+                if n_added:
+                    manifest.append((plex_id, gene, acc, pos, wt, alt,
+                                     int(ncarr), int(n_gen - ncarr), jpos, n_added))
 
         if not entries:
             continue
 
-        out_fasta = out_dir / f"{plex_id}.fasta"
-        with open(out_fasta, "w") as f:
+        # per-plex swap-only FASTA (for inspection)
+        with open(out_dir / f"{plex_id}.fasta", "w") as f:
             for header, pep in entries.values():
                 f.write(f"{header}\n{pep}\n")
+        # combined search FASTA = reference proteome + contact swap peptides
+        with open(combined_dir / f"{plex_id}.fasta", "w") as f:
+            f.write(ref_text)
+            for header, pep in entries.values():
+                f.write(f"{header}\n{pep}\n")
+        n_with_fasta += 1
 
-    print(f"\nDone. Contact SAAP FASTAs written to {out_dir}/", flush=True)
+    man = pd.DataFrame(manifest, columns=[
+        "plex_id","gene","acc","miss_pos","miss_wt","miss_alt",
+        "n_carrier","n_noncarrier","contact_pos","n_swap_peptides"])
+    man_path = Path(args.out_dir).parent / "contact_saap_manifest.tsv"
+    man.to_csv(man_path, sep="\t", index=False)
 
-    # ── Combine with existing per-plex FASTAs ─────────────────────────────────
-    # Appends contact SAAP entries to per_plex/ FASTAs → per_plex_contact/
-    # Then add_decoys.py should be run on per_plex_contact/ before FragPipe.
-    per_plex_dir     = Path(args.out_dir).parent / "per_plex"
-    combined_dir     = Path(args.out_dir).parent / "per_plex_contact"
-    combined_dir.mkdir(parents=True, exist_ok=True)
-
-    n_combined = 0
-    for plex_id in plex_ids:
-        base_fasta    = per_plex_dir    / f"{plex_id}.fasta"
-        contact_fasta = out_dir         / f"{plex_id}.fasta"
-        combined_fasta= combined_dir    / f"{plex_id}.fasta"
-
-        if not base_fasta.exists():
-            continue
-        with open(combined_fasta, "w") as out_f:
-            out_f.write(base_fasta.read_text())
-            if contact_fasta.exists():
-                out_f.write("\n")
-                out_f.write(contact_fasta.read_text())
-        n_combined += 1
-
-    print(f"Combined FASTAs written to {combined_dir}/ ({n_combined} plexes)", flush=True)
-    print("Next step: run add_decoys.py on per_plex_contact/ then resubmit FragPipe.", flush=True)
+    print(f"\nDone. {n_with_fasta} plex FASTAs -> {combined_dir}/", flush=True)
+    print(f"  swap-only FASTAs -> {out_dir}/", flush=True)
+    print(f"  manifest         -> {man_path}", flush=True)
+    if len(man):
+        n_uniq = man[["gene","miss_pos","miss_wt","miss_alt"]].drop_duplicates().shape[0]
+        print(f"  missense-contact rows: {len(man):,} | unique missense: {n_uniq:,} "
+              f"| genes: {man['gene'].nunique():,}", flush=True)
+    print("Next: run add_decoys.py on per_plex_contact/ then FragPipe.", flush=True)
 
 
 if __name__ == "__main__":
