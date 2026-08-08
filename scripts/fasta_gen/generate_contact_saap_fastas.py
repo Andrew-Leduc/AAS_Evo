@@ -101,6 +101,9 @@ def parse_args():
     ap.add_argument("--min-noncarrier", type=int, default=3)
     ap.add_argument("--vaf-threshold", type=float, default=VAF_THRESHOLD,
                     help="min VAF for a confident carrier; set 0 to disable")
+    ap.add_argument("--gnomad-max", type=float, default=None,
+                    help="drop variants with gnomADe_AF above this (e.g. 0.1) to "
+                         "exclude common polymorphisms; default: no rarity filter")
     return ap.parse_args()
 
 
@@ -286,9 +289,13 @@ def main():
     print("Loading missense table...", flush=True)
     miss = pd.read_csv(args.missense, sep="\t", low_memory=False,
                        usecols=["sample_id", "SYMBOL", "Protein_position",
-                                "Amino_acids", "VAF"])
+                                "Amino_acids", "VAF", "gnomADe_AF"])
     miss["VAF"] = pd.to_numeric(miss["VAF"], errors="coerce")
     miss = miss[miss["VAF"] >= args.vaf_threshold]
+    if args.gnomad_max is not None:
+        af = pd.to_numeric(miss["gnomADe_AF"], errors="coerce").fillna(0)
+        miss = miss[af <= args.gnomad_max]
+        print(f"  gnomADe_AF <= {args.gnomad_max}: {len(miss):,} rows", flush=True)
     miss["pos"] = pd.to_numeric(
         miss["Protein_position"].astype(str).str.split("-").str[0], errors="coerce")
     aa = miss["Amino_acids"].astype(str).str.split("/", expand=True)
