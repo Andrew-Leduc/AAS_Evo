@@ -28,6 +28,7 @@ arrays via --nshards N (+ SLURM_ARRAY_TASK_ID) or --shard i --nshards N.
 
 import argparse
 import gzip
+import json
 import os
 import re
 import sys
@@ -37,7 +38,10 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-AF_URL = 'https://alphafold.ebi.ac.uk/files/AF-{acc}-F{frag}-model_v4.pdb'
+# AlphaFold DB is at model_v6 (2026); older local files may be v4/v5.
+AF_URL = 'https://alphafold.ebi.ac.uk/files/AF-{acc}-F{frag}-model_v{ver}.pdb'
+API_URL = 'https://alphafold.ebi.ac.uk/api/prediction/{acc}'
+MODEL_VERSIONS = ('6', '5', '4')
 
 _THREE2ONE = {
     'ALA': 'A', 'ARG': 'R', 'ASN': 'N', 'ASP': 'D', 'CYS': 'C', 'GLN': 'Q',
@@ -69,29 +73,56 @@ def accs_from_missense(missense, gene_to_acc, vaf_threshold):
 
 
 def find_local_pdb(acc, dirs, frag=1):
-    """Look for an already-present AlphaFold PDB (plain or gzipped)."""
+    """Look for an already-present AlphaFold PDB (any model version, plain or gz)."""
     for d in dirs:
         if not d:
             continue
-        for ext in ('.pdb', '.pdb.gz'):
-            p = Path(d) / f'AF-{acc}-F{frag}-model_v4{ext}'
-            if p.exists() and p.stat().st_size > 0:
-                return p
+        d = Path(d)
+        for ver in MODEL_VERSIONS:
+            for ext in ('.pdb', '.pdb.gz'):
+                p = d / f'AF-{acc}-F{frag}-model_v{ver}{ext}'
+                if p.exists() and p.stat().st_size > 0:
+                    return p
+    return None
+
+
+def _fetch(url, dst):
+    try:
+        urllib.request.urlretrieve(url, dst)
+        return True
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError):
+        if dst.exists():
+            dst.unlink()
+        return False
+
+
+def _resolve_api_pdb_url(acc):
+    """Ask the AlphaFold API for the current pdbUrl (version-proof fallback)."""
+    try:
+        with urllib.request.urlopen(API_URL.format(acc=acc), timeout=30) as r:
+            d = json.load(r)
+        if d and d[0].get('pdbUrl'):
+            return d[0]['pdbUrl']
+    except Exception:
+        pass
     return None
 
 
 def download_pdb(acc, cache, frag=1):
-    dst = cache / f'AF-{acc}-F{frag}-model_v4.pdb'
+    # fast path: current model version
+    ver = MODEL_VERSIONS[0]
+    dst = cache / f'AF-{acc}-F{frag}-model_v{ver}.pdb'
     if dst.exists() and dst.stat().st_size > 0:
         return dst
-    url = AF_URL.format(acc=acc, frag=frag)
-    try:
-        urllib.request.urlretrieve(url, dst)
-    except (urllib.error.HTTPError, urllib.error.URLError, OSError):
-        if dst.exists():
-            dst.unlink()
-        return None
-    return dst
+    if _fetch(AF_URL.format(acc=acc, frag=frag, ver=ver), dst):
+        return dst
+    # fallback: resolve the exact URL via the API (handles version bumps)
+    api_url = _resolve_api_pdb_url(acc)
+    if api_url:
+        dst = cache / api_url.rsplit('/', 1)[-1]
+        if _fetch(api_url, dst):
+            return dst
+    return None
 
 
 def parse_pdb(pdb):
