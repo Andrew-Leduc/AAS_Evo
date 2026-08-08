@@ -99,6 +99,8 @@ def parse_args():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--min-carrier", type=int, default=3)
     ap.add_argument("--min-noncarrier", type=int, default=3)
+    ap.add_argument("--vaf-threshold", type=float, default=VAF_THRESHOLD,
+                    help="min VAF for a confident carrier; set 0 to disable")
     return ap.parse_args()
 
 
@@ -286,7 +288,7 @@ def main():
                        usecols=["sample_id", "SYMBOL", "Protein_position",
                                 "Amino_acids", "VAF"])
     miss["VAF"] = pd.to_numeric(miss["VAF"], errors="coerce")
-    miss = miss[miss["VAF"] >= VAF_THRESHOLD]
+    miss = miss[miss["VAF"] >= args.vaf_threshold]
     miss["pos"] = pd.to_numeric(
         miss["Protein_position"].astype(str).str.split("-").str[0], errors="coerce")
     aa = miss["Amino_acids"].astype(str).str.split("/", expand=True)
@@ -296,7 +298,7 @@ def main():
     miss = miss[(miss["wt"].str.len() == 1) & (miss["alt"].str.len() == 1)]
     miss["pos"] = miss["pos"].astype(int)
     processed_uuids = set(miss["sample_id"].unique())
-    print(f"  {len(miss):,} VAF>={VAF_THRESHOLD} missense rows "
+    print(f"  {len(miss):,} VAF>={args.vaf_threshold} missense rows "
           f"({len(processed_uuids):,} genomics samples)", flush=True)
 
     # restrict to sample_ids that appear in any plex (avoids scanning all patients)
