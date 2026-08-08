@@ -263,7 +263,7 @@ def powered(carrier_uuids, plex_uuids, min_c, min_nc):
 def main():
     ap = argparse.ArgumentParser()
     scratch = '/scratch/leduc.an/AAS_Evo'
-    ap.add_argument('--missense', default=f'{scratch}/ANALYSIS/all_missense_with_spurs.tsv')
+    ap.add_argument('--missense', default='/projects/slavov/andrew/AAS_EVO/all_missense_mutations.tsv')
     ap.add_argument('--ref-fasta', default=f'{scratch}/SEQ_FILES/uniprot_human_canonical.fasta')
     ap.add_argument('--contact-dir', default=f'{scratch}/SPURS/contact_maps')
     ap.add_argument('--ddg-dir', default=f'{scratch}/SPURS/ddg_matrices')
@@ -276,8 +276,8 @@ def main():
     ap.add_argument('--dist-threshold', type=float, default=3.0)
     ap.add_argument('--min-seq-sep', type=int, default=21)
     ap.add_argument('--vaf-threshold', type=float, default=0.3)
-    ap.add_argument('--min-carrier', type=int, default=2)
-    ap.add_argument('--min-noncarrier', type=int, default=2)
+    ap.add_argument('--min-carrier', type=int, default=3)
+    ap.add_argument('--min-noncarrier', type=int, default=3)
     ap.add_argument('--n-syn', type=int, default=2500)
     ap.add_argument('--n-del', type=int, default=2500)
     ap.add_argument('--n-null', type=int, default=5000)
@@ -307,9 +307,15 @@ def main():
     processed_uuids = set(full['sample_id'].unique())
     print(f'  {len(processed_uuids):,} genomics-processed samples')
 
+    # am_pathogenicity / spurs_ddg are optional annotation (SPURS may be absent)
+    _req = ['sample_id', 'SYMBOL', 'Protein_position', 'Amino_acids', 'VAF', 'gnomADe_AF']
+    _opt = ['am_pathogenicity', 'spurs_ddg']
+    _avail = set(pd.read_csv(args.missense, sep='\t', nrows=0).columns)
     miss = pd.read_csv(args.missense, sep='\t', low_memory=False,
-                       usecols=['sample_id', 'SYMBOL', 'Protein_position', 'Amino_acids',
-                                'VAF', 'gnomADe_AF', 'am_pathogenicity', 'spurs_ddg'])
+                       usecols=_req + [c for c in _opt if c in _avail])
+    for c in _opt:
+        if c not in miss.columns:
+            miss[c] = np.nan
     miss['VAF'] = pd.to_numeric(miss['VAF'], errors='coerce')
     miss = miss[miss['VAF'] >= args.vaf_threshold]
     miss['acc'] = miss['SYMBOL'].map(gene_to_acc)
