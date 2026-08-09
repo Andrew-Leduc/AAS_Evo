@@ -23,7 +23,7 @@
 set -e
 
 # Load Python module (required on compute nodes)
-module load python/3.8.1 2>/dev/null || true
+module load python/3.13.5 2>/dev/null || module load python/3.8.1 2>/dev/null || true
 
 # Compute nodes reach the internet (incl. PDC CloudFront URLs) via the site
 # HTTP proxy; requests honours these env vars. Override HTTP_PROXY_URL if needed.
