@@ -14,6 +14,7 @@ Usage:
 import argparse
 import os
 import sys
+import numpy as np
 import pandas as pd
 from pathlib import Path
 
@@ -95,6 +96,7 @@ def main():
 
     totals = {th: [] for th in THS}     # th -> per-plex unique swap-peptide counts
     n_miss = {th: [] for th in THS}     # th -> per-plex testable-missense counts
+    uniq   = {th: set() for th in THS}  # th -> unique (gene,pos,wt,alt) testable missense
 
     print(f"Scanning {len(plex_ids)} plexes for thresholds {THS} ...", flush=True)
     for pi, plex_id in enumerate(plex_ids):
@@ -147,6 +149,7 @@ def main():
                         ent.add(pep)
             totals[th].append(len(ent))
             n_miss[th].append(len(testable))
+            uniq[th].update(testable.index)
 
     print("\n" + "=" * 64)
     print("SEARCH-SPACE ESTIMATE (unique swap peptides per plex, no FASTA written)")
@@ -164,6 +167,56 @@ def main():
         print(f"  testable missense : {ma/max(mb,1):.2f}x  ({mb:,} -> {ma:,})")
         print(f"  swap peptides     : {sa/max(sb,1):.2f}x  ({sb:,} -> {sa:,})  "
               f"(+{100*(sa-sb)/max(sb,1):.0f}%)")
+
+    from collections import Counter
+    print("\n" + "=" * 64)
+    print("PER-MISSENSE CONTACT/SWAP BREAKDOWN (unique testable missense)")
+    print("=" * 64)
+    for th in THS:
+        n_tot = len(uniq[th]); no_acc = no_wt = no_map = 0
+        ncontact = Counter(); nswap = []
+        for (gene, pos, wt, alt) in uniq[th]:
+            acc = gene_to_acc.get(gene)
+            if not acc or acc not in seqs:
+                no_acc += 1; continue
+            seq = seqs[acc]
+            if pos < 1 or pos > len(seq) or seq[pos - 1] != wt:
+                no_wt += 1; continue
+            if acc not in cm_cache:
+                cm_cache[acc] = G.load_contact_map(args.contact_dir, acc, seq_len=len(seq))
+            p2i, dm = cm_cache[acc]
+            if dm is None:
+                no_map += 1; continue
+            key = (acc, pos)
+            if key not in nearby_cache:
+                nearby_cache[key] = G.nearby_positions(p2i, dm, pos, args.dist)
+            far = [j for j in nearby_cache[key]
+                   if 1 <= j <= len(seq) and abs(j - pos) >= G.MIN_SEQ_SEP]
+            ncontact[len(far)] += 1
+            ps = set()
+            for j in far:
+                for _, pep in G.make_swap_peptides(seq, acc, gene, j, "tumor", "plex",
+                                                   source_tag="contact", canonical_peptides=canon):
+                    ps.add(pep)
+            nswap.append(len(ps))
+        with_c = sum(v for k, v in ncontact.items() if k > 0)
+        print(f"\n{th[0]}c/{th[1]}nc: {n_tot:,} unique testable missense")
+        print(f"  dropped: no acc/seq={no_acc:,}  wt-mismatch={no_wt:,}  no contact map={no_map:,}")
+        print(f"  with >= 1 contact (>= {G.MIN_SEQ_SEP} aa away): {with_c:,} "
+              f"({100*with_c/max(n_tot,1):.1f}% of testable)")
+        print("  #contacts -> #missense:")
+        for k in sorted(ncontact):
+            lab = f"{k}" if k < 6 else "6+"
+        agg = Counter()
+        for k, v in ncontact.items():
+            agg["0" if k == 0 else ("1" if k == 1 else ("2" if k == 2 else ("3-5" if k <= 5 else "6+")))] += v
+        for lab in ["0", "1", "2", "3-5", "6+"]:
+            if agg[lab]:
+                print(f"     {lab:>4} contacts: {agg[lab]:,}")
+        sw = np.array([x for x in nswap if x > 0])
+        if len(sw):
+            print(f"  swaps/missense (those with contacts): "
+                  f"mean={sw.mean():.1f} median={np.median(sw):.0f} max={int(sw.max())}")
 
 
 if __name__ == "__main__":
