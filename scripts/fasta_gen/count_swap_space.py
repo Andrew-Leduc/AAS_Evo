@@ -49,8 +49,12 @@ def main():
         ap.add_argument(f"--{k.replace('_','-')}", default=v)
     ap.add_argument("--dist", type=float, default=G.DIST_THRESHOLD)
     ap.add_argument("--vaf-threshold", type=float, default=G.VAF_THRESHOLD)
-    ap.add_argument("--thresholds", default="3:3,2:2",
-                    help="comma list of carrier:noncarrier, e.g. 3:3,2:2")
+    ap.add_argument("--thresholds", default="1:0",
+                    help="comma list of in-plex carrier:noncarrier, e.g. 1:0,3:3")
+    ap.add_argument("--min-patients", type=int, default=G.MIN_PATIENTS,
+                    help="min patients dataset-wide carrying the driving missense")
+    ap.add_argument("--max-patient-frac", type=float, default=G.MAX_PATIENT_FRAC,
+                    help="exclude missense carried by >= this fraction of all patients")
     args = ap.parse_args()
     THS = [tuple(int(x) for x in t.split(":")) for t in args.thresholds.split(",")]
 
@@ -87,6 +91,15 @@ def main():
     all_plex_uuids = set(gdc.loc[gdc["case_submitter_id"].isin(
         tmt[tmt["run_metadata_id"].isin(plex_ids)]["case_submitter_id"]), "gdc_file_id"])
     miss = miss[miss["sample_id"].isin(all_plex_uuids)]
+
+    # dataset-wide missense eligibility (mirrors generate_contact_saap_fastas)
+    total_patients = len(all_plex_uuids & processed)
+    _wide = miss.groupby(["SYMBOL", "pos", "wt", "alt"])["sample_id"].nunique()
+    eligible = set(_wide[(_wide >= args.min_patients) &
+                         (_wide < args.max_patient_frac * total_patients)].index)
+    print(f"dataset-wide eligible missense: {len(eligible):,} of {len(_wide):,} "
+          f"(>= {args.min_patients} patients & < {args.max_patient_frac:.0%} "
+          f"of {total_patients:,} samples)", flush=True)
 
     gene_to_acc = G.build_gene_to_acc(args.ddg_dir)
     for g, a in gene2acc.items():
@@ -125,6 +138,7 @@ def main():
             mc, mnc = th
             ent = set()
             testable = cc[(cc >= mc) & ((n_gen - cc) >= mnc)] if n_gen >= mc + mnc else cc.iloc[:0]
+            testable = testable[testable.index.isin(eligible)]
             for (gene, pos, wt, alt), _ in testable.items():
                 acc = gene_to_acc.get(gene)
                 if not acc or acc not in seqs:

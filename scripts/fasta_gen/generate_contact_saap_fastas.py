@@ -3,12 +3,18 @@
 Generate per-plex FASTAs containing predicted SAAP candidates at positions
 structurally proximal to missense mutations that are testable in that plex.
 
+Eligibility (dataset-wide, computed once):
+  A missense is eligible if it is carried by >= --min-patients patients across the
+  whole on-plex cohort AND by < --max-patient-frac of all patients (the upper bound
+  drops near-fixed common variants that have essentially no non-carriers).
+
 For each TMT plex:
-  1. Find missense mutations that are 3v3-TESTABLE in that plex: >= --min-carrier
-     carrier channels AND >= --min-noncarrier non-carrier channels (VAF>=0.3).
+  1. Add contact swaps for any dataset-wide-eligible missense that has >= --min-carrier
+     carrier channels in that plex (VAF>=0.3). The old within-set 3v3 requirement is
+     dropped, so a 1-carrier-vs-many-non-carrier plex still contributes.
      No stability (AM/SPURS) filter — EVE is applied later at analysis time.
   2. For each missense at position i, find positions j with Ca-Ca < DIST_THRESHOLD
-     and at least MIN_SEQ_SEP residues away in sequence.
+     and at least --min-seq-sep residues away in sequence.
   3. Add ALL allowed AA swaps at position j as tryptic peptides (excluding K/R,
      isobaric, and M-modification confounds; dropping canonical peptides).
   4. Write per-plex search FASTA = reference proteome + those swap peptides, plus
@@ -77,7 +83,9 @@ GNOMAD_NEUTRAL  = 0.1
 GNOMAD_MAX      = 0.01
 VAF_THRESHOLD   = 0.3
 DIST_THRESHOLD  = 3.0   # Å Cα-Cα
-MIN_SEQ_SEP     = 30    # min AA separation between contact pos and missense pos
+MIN_SEQ_SEP     = 21    # min AA separation between contact pos and missense pos
+MIN_PATIENTS    = 5     # min patients dataset-wide carrying the driving missense
+MAX_PATIENT_FRAC= 0.75  # exclude missense carried by >= this fraction of all patients
 
 DEFAULTS = dict(
     missense   = "/projects/slavov/andrew/AAS_EVO/all_missense_mutations.tsv",
@@ -97,8 +105,19 @@ def parse_args():
         ap.add_argument(f"--{k.replace('_','-')}", default=v)
     ap.add_argument("--dist", type=float, default=DIST_THRESHOLD)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--min-carrier", type=int, default=3)
-    ap.add_argument("--min-noncarrier", type=int, default=3)
+    ap.add_argument("--min-carrier", type=int, default=1,
+                    help="min carrier channels of the missense IN a plex to add its "
+                         "contact swaps to that plex's FASTA (within-set 3v3 dropped)")
+    ap.add_argument("--min-noncarrier", type=int, default=0,
+                    help="min non-carrier channels in the plex (0 = no within-plex "
+                         "non-carrier requirement)")
+    ap.add_argument("--min-patients", type=int, default=MIN_PATIENTS,
+                    help="min patients dataset-wide carrying the driving missense")
+    ap.add_argument("--max-patient-frac", type=float, default=MAX_PATIENT_FRAC,
+                    help="exclude missense carried by >= this fraction of all patients "
+                         "(kills near-fixed common variants)")
+    ap.add_argument("--min-seq-sep", type=int, default=MIN_SEQ_SEP,
+                    help="min sequence separation (aa) between contact and missense")
     ap.add_argument("--vaf-threshold", type=float, default=VAF_THRESHOLD,
                     help="min VAF for a confident carrier; set 0 to disable")
     ap.add_argument("--gnomad-max", type=float, default=None,
@@ -315,6 +334,17 @@ def main():
     miss = miss[miss["sample_id"].isin(all_plex_uuids)]
     print(f"  {len(miss):,} on plex patients", flush=True)
 
+    # ── dataset-wide missense eligibility (replaces within-set 3v3) ──────────
+    # denominator = every genomics sample on a plex (whether or not it has this
+    # missense); numerator = distinct samples carrying the exact (gene,pos,wt,alt).
+    total_patients = len(all_plex_uuids & processed_uuids)
+    wide = miss.groupby(["SYMBOL", "pos", "wt", "alt"])["sample_id"].nunique()
+    hi = args.max_patient_frac * total_patients
+    eligible = set(wide[(wide >= args.min_patients) & (wide < hi)].index)
+    print(f"  dataset-wide eligible missense: {len(eligible):,} of {len(wide):,} "
+          f"(>= {args.min_patients} patients & < {args.max_patient_frac:.0%} "
+          f"of {total_patients:,} samples)", flush=True)
+
     gene_to_acc = build_gene_to_acc(args.ddg_dir)
     for gene, acc in gene2acc.items():
         gene_to_acc.setdefault(gene, acc)
@@ -341,8 +371,8 @@ def main():
     n_with_fasta = 0
 
     print(f"\nGenerating FASTAs for {len(plex_ids)} plexes "
-          f"(>= {args.min_carrier} carriers & >= {args.min_noncarrier} non-carriers, "
-          f"contacts < {args.dist}A, >= {MIN_SEQ_SEP} aa away)...", flush=True)
+          f"(eligible missense with >= {args.min_carrier} in-plex carrier(s), "
+          f"contacts < {args.dist}A, >= {args.min_seq_sep} aa away)...", flush=True)
 
     for pi, plex_id in enumerate(plex_ids):
         if pi % 20 == 0:
@@ -370,10 +400,11 @@ def main():
             continue
         pm = pd.concat(frames)
 
-        # carriers per variant within this plex; keep 3v3-testable ones
+        # carriers of each variant within this plex; keep dataset-wide-eligible ones
         cc = pm.groupby(["SYMBOL","pos","wt","alt"])["sample_id"].nunique()
         testable = cc[(cc >= args.min_carrier) &
                       ((n_gen - cc) >= args.min_noncarrier)]
+        testable = testable[testable.index.isin(eligible)]
         if testable.empty:
             continue
 
@@ -394,7 +425,7 @@ def main():
             if key not in nearby_cache:
                 nearby_cache[key] = nearby_positions(pos_to_idx, dm, pos, args.dist)
             for jpos in nearby_cache[key]:
-                if jpos < 1 or jpos > len(seq) or abs(jpos - pos) < MIN_SEQ_SEP:
+                if jpos < 1 or jpos > len(seq) or abs(jpos - pos) < args.min_seq_sep:
                     continue
                 n_added = 0
                 for header, pep in make_swap_peptides(
