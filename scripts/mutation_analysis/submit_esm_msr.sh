@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:1
+# NB: request a100/h200/t4 (CC>=7.5); the installed torch has NO kernels for
+# V100 (CC 7.0) -> "no kernel image available". Override with --gres on sbatch.
+#SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=8:00:00
