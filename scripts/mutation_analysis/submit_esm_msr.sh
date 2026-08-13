@@ -27,6 +27,9 @@ module load anaconda3/2024.06 cuda/13.2.0
 source "$VENV/bin/activate"
 export HF_HOME="${HF_HOME:-/projects/slavov/andrew/esm/hf_cache}"
 export TMPDIR="${TMPDIR:-/scratch/leduc.an/tmp}"
+# compute nodes reach the internet (HF weights, RCSB) via the site proxy
+PROXY="${HTTP_PROXY_URL:-http://10.99.0.130:3128}"
+export https_proxy="$PROXY" http_proxy="$PROXY"
 : "${HF_TOKEN:?set HF_TOKEN (a HuggingFace read token) before sbatch}"
 
 cd "$ESM_DIR"
