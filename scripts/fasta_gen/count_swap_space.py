@@ -168,11 +168,18 @@ def main():
     print("\n" + "=" * 64)
     print("SEARCH-SPACE ESTIMATE (unique swap peptides per plex, no FASTA written)")
     print("=" * 64)
+    ref_n = len(canon)
+    print(f"reference FASTA: {ref_n:,} canonical tryptic peptides "
+          f"(len>=6, 0 missed cleavage) — this is the denominator each plex search "
+          f"already carries.\n")
     for th in THS:
         v = pd.Series(totals[th]); m = pd.Series(n_miss[th])
         print(f"{th[0]}c/{th[1]}nc : testable missense/plex mean={m.mean():.0f} | "
               f"swap peptides/plex mean={v.mean():.0f} median={v.median():.0f} "
               f"max={int(v.max())} | total across plexes={int(v.sum()):,}")
+        print(f"          added vs reference FASTA: mean={100*v.mean()/ref_n:.2f}% "
+              f"median={100*v.median()/ref_n:.2f}% max={100*v.max()/ref_n:.2f}%  "
+              f"(mean +{v.mean():.0f} peptides on {ref_n:,})")
     if len(THS) >= 2:
         base, alt = THS[0], THS[1]
         sb, sa = sum(totals[base]), sum(totals[alt])
