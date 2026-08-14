@@ -13,8 +13,9 @@ For each TMT plex:
      carrier channels in that plex (VAF>=0.3). The old within-set 3v3 requirement is
      dropped, so a 1-carrier-vs-many-non-carrier plex still contributes.
      No stability (AM/SPURS) filter — EVE is applied later at analysis time.
-  2. For each missense at position i, find positions j with Ca-Ca < DIST_THRESHOLD
-     and at least --min-seq-sep residues away in sequence.
+  2. For each missense at position i, find positions j whose MINIMUM HEAVY-ATOM
+     distance to i is < DIST_THRESHOLD (Angstrom) and at least --min-seq-sep
+     residues away in sequence.
   3. Add ALL allowed AA swaps at position j as tryptic peptides (excluding K/R,
      isobaric, and M-modification confounds; dropping canonical peptides).
   4. Write per-plex search FASTA = reference proteome + those swap peptides, plus
@@ -82,7 +83,7 @@ AM_BENIGN_MAX   = 0.1
 GNOMAD_NEUTRAL  = 0.1
 GNOMAD_MAX      = 0.01
 VAF_THRESHOLD   = 0.3
-DIST_THRESHOLD  = 3.0   # Å Cα-Cα
+DIST_THRESHOLD  = 5.0   # Å, minimum heavy-atom distance (maps are min-heavy-atom, not Cα-Cα)
 MIN_SEQ_SEP     = 21    # min AA separation between contact pos and missense pos
 MIN_PATIENTS    = 5     # min patients dataset-wide carrying the driving missense
 MAX_PATIENT_FRAC= 0.75  # exclude missense carried by >= this fraction of all patients
