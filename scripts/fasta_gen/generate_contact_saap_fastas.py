@@ -87,6 +87,7 @@ DIST_THRESHOLD  = 5.0   # Å, minimum heavy-atom distance (maps are min-heavy-at
 MIN_SEQ_SEP     = 21    # min AA separation between contact pos and missense pos
 MIN_PATIENTS    = 5     # min patients dataset-wide carrying the driving missense
 MAX_PATIENT_FRAC= 0.75  # exclude missense carried by >= this fraction of all patients
+LOC_WINDOW      = 5     # +-residues around a contact pos to scan for collision-prone missense
 
 DEFAULTS = dict(
     missense   = "/projects/slavov/andrew/AAS_EVO/all_missense_mutations.tsv",
@@ -119,6 +120,9 @@ def parse_args():
                          "(kills near-fixed common variants)")
     ap.add_argument("--min-seq-sep", type=int, default=MIN_SEQ_SEP,
                     help="min sequence separation (aa) between contact and missense")
+    ap.add_argument("--loc-window", type=int, default=LOC_WINDOW,
+                    help="+-residues around a contact pos to scan for collision-prone "
+                         "genomic missense (localization/isobaric confound)")
     ap.add_argument("--vaf-threshold", type=float, default=VAF_THRESHOLD,
                     help="min VAF for a confident carrier; set 0 to disable")
     ap.add_argument("--gnomad-max", type=float, default=None,
@@ -369,6 +373,7 @@ def main():
     combined_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = []       # rows describing what was searched
+    contact_drivers = defaultdict(set)   # (gene, contact_pos) -> {(miss_pos, wt, alt)}
     n_with_fasta = 0
 
     print(f"\nGenerating FASTAs for {len(plex_ids)} plexes "
@@ -439,6 +444,7 @@ def main():
                 if n_added:
                     manifest.append((plex_id, gene, acc, pos, wt, alt,
                                      int(ncarr), int(n_gen - ncarr), jpos, n_added))
+                    contact_drivers[(gene, jpos)].add((int(pos), wt, alt))
 
         if not entries:
             continue
@@ -460,7 +466,45 @@ def main():
     man_path = Path(args.out_dir).parent / "contact_saap_manifest.tsv"
     man.to_csv(man_path, sep="\t", index=False)
 
+    # ── swap -> driving-missense map + confound flags (single source of truth) ─
+    # One row per searched contact site. The notebook joins detected swaps on
+    # (gene, contact_pos) instead of re-deriving contacts, so it can't drift from
+    # the search rules (this is how the >=21 seq-sep guard got lost before).
+    #   driving_missense        : all missense (>= min_seq_sep, in contact) that
+    #                             put a swap here — carriers are patients with any.
+    #   n_driving_missense > 1  : ambiguous — the AAS could be driven by >1 missense.
+    #   nearby_alt_residues     : residues produced by ANY genomic missense within
+    #                             +-loc_window of this position. A swap whose ALT is
+    #                             in this set is a localization/isobaric confound
+    #                             (e.g. genomic G211S read as AAS G210S).
+    gene_gmiss = defaultdict(set)   # gene -> {(pos, wt, alt)} observed genomic missense
+    for r in miss[["SYMBOL", "pos", "wt", "alt"]].drop_duplicates().itertuples(index=False):
+        gene_gmiss[r.SYMBOL].add((int(r.pos), r.wt, r.alt))
+
+    map_rows = []
+    for (gene, jpos), drivers in contact_drivers.items():
+        acc = gene_to_acc.get(gene, "")
+        seq = seqs.get(acc, "")
+        wt_j = seq[jpos - 1] if 1 <= jpos <= len(seq) else "?"
+        nearby = sorted((p, w, a) for (p, w, a) in gene_gmiss.get(gene, ())
+                        if abs(p - jpos) <= args.loc_window)
+        map_rows.append({
+            "gene": gene, "acc": acc, "contact_pos": jpos, "wt_aa": wt_j,
+            "n_driving_missense": len(drivers),
+            "min_seqsep": min(abs(p - jpos) for (p, _, _) in drivers),
+            "driving_missense": ",".join(f"{p}:{w}>{a}" for (p, w, a) in sorted(drivers)),
+            "nearby_genomic_missense": ",".join(f"{p}:{w}>{a}" for (p, w, a) in nearby),
+            "nearby_alt_residues": "".join(sorted({a for (_, _, a) in nearby})),
+        })
+    swap_map = pd.DataFrame(map_rows).sort_values(["gene", "contact_pos"])
+    map_path = Path(args.out_dir).parent / "contact_saap_swap_map.tsv"
+    swap_map.to_csv(map_path, sep="\t", index=False)
+
     print(f"\nDone. {n_with_fasta} plex FASTAs -> {combined_dir}/", flush=True)
+    if len(swap_map):
+        amb = int((swap_map["n_driving_missense"] > 1).sum())
+        print(f"  swap->missense map -> {map_path} ({len(swap_map):,} contact sites | "
+              f"ambiguous >1 driver: {amb:,} = {100*amb/len(swap_map):.1f}%)", flush=True)
     print(f"  swap-only FASTAs -> {out_dir}/", flush=True)
     print(f"  manifest         -> {man_path}", flush=True)
     if len(man):
