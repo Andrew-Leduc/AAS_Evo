@@ -34,6 +34,9 @@ def main():
     ap.add_argument("--delta-col", default="delta")
     ap.add_argument("--score-col", default="combined_pred",
                     help="ddG column used for the double/single subtractions")
+    ap.add_argument("--sig-file", default=f"{BASE}/per_swap_carrier_tests_pooled.tsv",
+                    help="per-swap significance TSV (gene, contact_pos, swap, p); "
+                         "points with p<0.05 are colored red")
     ap.add_argument("--min-carrier", type=int, default=3)
     ap.add_argument("--min-noncarrier", type=int, default=2)
     a = ap.parse_args()
@@ -67,7 +70,18 @@ def main():
                        + req["aas_pos"].astype(int).astype(str) + req["aas_alt"])
     m = (req.merge(doubles, on=["uniprot", "mut_type"], how="inner")
             .drop_duplicates(["uniprot", "mut_type"]))
-    print(f"merged {len(m):,} of {len(req):,} request pairs\n")
+    print(f"merged {len(m):,} of {len(req):,} request pairs")
+
+    # attach per-swap significance p (for red coloring)
+    m["p_sig"] = np.nan
+    try:
+        sig = pd.read_csv(a.sig_file, sep="\t")
+        sig = sig[["gene", "swap", "p"]].rename(columns={"p": "p_sig"}).drop_duplicates(["gene", "swap"])
+        m = m.drop(columns=["p_sig"]).merge(sig, on=["gene", "swap"], how="left")
+        print(f"significance p attached for {m['p_sig'].notna().sum():,} pairs "
+              f"({int((m['p_sig'] < 0.05).sum())} with p<0.05)\n")
+    except FileNotFoundError:
+        print(f"(no sig file at {a.sig_file}; points won't be colored)\n")
 
     predictors = [
         ("combined_dddg_pred", "ESM epistasis ddddG (double - both singles)"),
@@ -86,10 +100,16 @@ def main():
                  (f"n_carrier>={a.min_carrier}", reliable)]):
             ax = axes[r, c]
             x = pd.to_numeric(m.loc[mask, pcol], errors="coerce"); y = d[mask]
-            ok = x.notna() & y.notna(); x, y = x[ok], y[ok]
-            ax.scatter(x, y, s=8, alpha=0.3)
+            ps = pd.to_numeric(m.loc[mask, "p_sig"], errors="coerce")
+            ok = x.notna() & y.notna(); x, y, ps = x[ok], y[ok], ps[ok]
+            red = (ps < 0.05).fillna(False).values
+            ax.scatter(x[~red], y[~red], s=8, alpha=0.25, color="#999999")
+            ax.scatter(x[red], y[red], s=22, alpha=0.85, color="#d62728",
+                       label=f"p<0.05 (n={int(red.sum())})")
             ax.axhline(0, color="k", lw=0.5); ax.axvline(0, color="k", lw=0.5)
             ax.set_xlabel(plabel); ax.set_ylabel(f"obs {a.delta_col}")
+            if red.sum():
+                ax.legend(fontsize=8, loc="best")
             if len(x) > 2:
                 rho, pr = spearmanr(x, y); rr, _ = pearsonr(x, y)
                 ax.set_title(f"{slabel}  n={len(x)}  Spearman={rho:+.3f} (p={pr:.1e})")
