@@ -33,7 +33,13 @@ def main():
     ap.add_argument("--out",     default=f"{BASE}/esm_vs_delta.pdf")
     ap.add_argument("--delta-col", default="delta")
     ap.add_argument("--score-col", default="combined_pred",
-                    help="ddG column used for the double/single subtractions")
+                    help="ddG column for the double total / epistasis panels")
+    ap.add_argument("--singles-scores", default=None,
+                    help="separate CSV of single-mutant scores (from --mode singles); "
+                         "needed for the double-minus-single predictors")
+    ap.add_argument("--single-score-col", default="wt_lora_pred",
+                    help="ddG column present in BOTH double and single scores, used for "
+                         "the double-minus-single subtraction")
     ap.add_argument("--sig-file", default=f"{BASE}/per_swap_carrier_tests_pooled.tsv",
                     help="per-swap significance TSV (gene, contact_pos, swap, p); "
                          "points with p<0.05 are colored red")
@@ -48,9 +54,18 @@ def main():
 
     is_double = sco["mut_type"].astype(str).str.contains(":")
     doubles = sco[is_double].copy()
-    singles = sco[~is_double].copy()
-    sing = singles.set_index(["uniprot", "mut_type"])[a.score_col].to_dict()
-    print(f"scores: {len(doubles):,} double rows, {len(singles):,} single rows")
+    ssc = a.single_score_col
+
+    # single-mutant ddGs: from a separate --singles-scores file if given, else from
+    # any single rows already in the main scores file
+    if a.singles_scores:
+        ss = pd.read_csv(a.singles_scores).rename(columns={"code": "uniprot"})
+        smt = "mut_type_pdb" if "mut_type_pdb" in ss.columns else "mut_type_renumbered"
+        ss = ss.rename(columns={smt: "mut_type"})
+    else:
+        ss = sco[~is_double].copy()
+    sing = ss.set_index(["uniprot", "mut_type"])[ssc].to_dict() if ssc in ss.columns else {}
+    print(f"scores: {len(doubles):,} double rows | single scores available: {len(sing):,}")
 
     def parts(mt):
         p = str(mt).split(":")
@@ -59,7 +74,7 @@ def main():
 
     def sub(row, which):
         s = sing.get((row["uniprot"], row[which]))
-        return (row[a.score_col] - s) if s is not None and pd.notna(s) else np.nan
+        return (row[ssc] - s) if (s is not None and pd.notna(s) and ssc in row) else np.nan
     doubles["double_minus_aas"]  = doubles.apply(lambda r: sub(r, "aas_mt"),  axis=1)
     doubles["double_minus_miss"] = doubles.apply(lambda r: sub(r, "miss_mt"), axis=1)
     print(f"  aas-single matched: {doubles['double_minus_aas'].notna().sum():,} | "

@@ -50,7 +50,7 @@ for ln in $(seq "$start" "$end"); do
     echo "[$(date +%H:%M:%S)] scoring $CODE"
     python src/esm_msr/inference.py \
         --checkpoint_path "$CKPT" \
-        --input_csv "$SHARD_DIR/${CODE}.csv" --mode singles+doubles \
+        --input_csv "$SHARD_DIR/${CODE}.csv" --mode "${MODE:-singles+doubles}" \
         --output_csv "$OUT" || echo "[FAIL] $CODE"
 done
 echo "task ${SLURM_ARRAY_TASK_ID} done"

@@ -44,13 +44,17 @@ def main():
     ap.add_argument("--chain", default="A")
     ap.add_argument("--significant-only", action="store_true",
                     help="keep only rows with q < 0.05 (needs a q column in the request)")
+    ap.add_argument("--singles", action="store_true",
+                    help="emit one row per UNIQUE single mutation (missense and AAS "
+                         "singles, mut_type has no ':') instead of the double mutants; "
+                         "score with --mode singles to enable double-minus-single analyses")
     args = ap.parse_args()
 
     req = pd.read_csv(args.request, sep="\t")
     if args.significant_only and "q" in req.columns:
         req = req[pd.to_numeric(req["q"], errors="coerce") < 0.05]
 
-    rows, no_pdb = [], set()
+    rows, no_pdb, seen = [], set(), set()
     for r in req.itertuples(index=False):
         acc = r.uniprot
         pdb = find_pdb(args.pdb_cache, acc)
@@ -59,13 +63,21 @@ def main():
             continue
         miss = f"{r.missense_wt}{int(r.missense_pos)}{r.missense_alt}"
         aas = f"{r.aas_wt}{int(r.aas_pos)}{r.aas_alt}"
-        rows.append({"pdb_file": pdb, "code": acc, "chain": args.chain,
-                     "mut_type": f"{miss}:{aas}"})
+        if args.singles:
+            for mt in (miss, aas):
+                if (acc, mt) not in seen:
+                    seen.add((acc, mt))
+                    rows.append({"pdb_file": pdb, "code": acc, "chain": args.chain,
+                                 "mut_type": mt})
+        else:
+            rows.append({"pdb_file": pdb, "code": acc, "chain": args.chain,
+                         "mut_type": f"{miss}:{aas}"})
 
     out = pd.DataFrame(rows).drop_duplicates()
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(args.out, index=False)
-    print(f"{len(out):,} double-mutant rows -> {args.out}")
+    kind = "single" if args.singles else "double-mutant"
+    print(f"{len(out):,} {kind} rows -> {args.out}")
     print(f"proteins: {out['code'].nunique() if len(out) else 0} | "
           f"accessions with no cached PDB: {len(no_pdb)}")
     if no_pdb:
