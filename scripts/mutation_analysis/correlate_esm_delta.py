@@ -77,6 +77,10 @@ def main():
         return (row[ssc] - s) if (s is not None and pd.notna(s) and ssc in row) else np.nan
     doubles["double_minus_aas"]  = doubles.apply(lambda r: sub(r, "aas_mt"),  axis=1)
     doubles["double_minus_miss"] = doubles.apply(lambda r: sub(r, "miss_mt"), axis=1)
+    doubles["miss_single_ddg"] = [sing.get((u, mt), np.nan)
+                                  for u, mt in zip(doubles["uniprot"], doubles["miss_mt"])]
+    doubles["aas_single_ddg"]  = [sing.get((u, mt), np.nan)
+                                  for u, mt in zip(doubles["uniprot"], doubles["aas_mt"])]
     print(f"  aas-single matched: {doubles['double_minus_aas'].notna().sum():,} | "
           f"miss-single matched: {doubles['double_minus_miss'].notna().sum():,}")
 
@@ -101,6 +105,8 @@ def main():
     predictors = [
         ("combined_dddg_pred", "ESM epistasis ddddG (double - both singles)"),
         ("double_minus_aas",   "ESM double - AAS single  (carrier both - AAS alone)"),
+        ("miss_single_ddg",    "ESM missense single ddG (isolates the missense)"),
+        ("aas_single_ddg",     "ESM AAS single ddG (isolates the AAS)"),
         ("double_minus_miss",  "ESM double - missense single"),
         ("combined_pred",      "ESM total double ddG"),
     ]
