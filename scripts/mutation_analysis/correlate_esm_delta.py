@@ -92,12 +92,14 @@ def main():
     reliable = (m["n_carrier"] >= a.min_carrier) & (m["n_noncarrier"] >= a.min_noncarrier)
     d = pd.to_numeric(m[a.delta_col], errors="coerce")
 
-    fig, axes = plt.subplots(len(predictors), 2, figsize=(12, 3.6 * len(predictors)))
+    subsets = [("all pairs", pd.Series(True, index=m.index)),
+               (f"n_carrier>={a.min_carrier}", reliable),
+               ("p<0.05 sig only", pd.to_numeric(m["p_sig"], errors="coerce") < 0.05)]
+    fig, axes = plt.subplots(len(predictors), len(subsets),
+                             figsize=(6 * len(subsets), 3.6 * len(predictors)))
     print(f"=== observed {a.delta_col} vs ESM predictors ===")
     for r, (pcol, plabel) in enumerate(predictors):
-        for c, (slabel, mask) in enumerate(
-                [("all pairs", pd.Series(True, index=m.index)),
-                 (f"n_carrier>={a.min_carrier}", reliable)]):
+        for c, (slabel, mask) in enumerate(subsets):
             ax = axes[r, c]
             x = pd.to_numeric(m.loc[mask, pcol], errors="coerce"); y = d[mask]
             ps = pd.to_numeric(m.loc[mask, "p_sig"], errors="coerce")
