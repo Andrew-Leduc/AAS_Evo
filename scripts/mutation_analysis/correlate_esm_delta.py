@@ -81,6 +81,10 @@ def main():
                                   for u, mt in zip(doubles["uniprot"], doubles["miss_mt"])]
     doubles["aas_single_ddg"]  = [sing.get((u, mt), np.nan)
                                   for u, mt in zip(doubles["uniprot"], doubles["aas_mt"])]
+    # explicit RAAS differential (from independently-scored singles):
+    #   carrier (double - missense_single)  minus  non-carrier (aas_single - WT)
+    #   = double - missense - aas  = epistasis, but built from the separate singles
+    doubles["raas_diff"] = doubles["double_minus_miss"] - doubles["aas_single_ddg"]
     print(f"  aas-single matched: {doubles['double_minus_aas'].notna().sum():,} | "
           f"miss-single matched: {doubles['double_minus_miss'].notna().sum():,}")
 
@@ -103,6 +107,7 @@ def main():
         print(f"(no sig file at {a.sig_file}; points won't be colored)\n")
 
     predictors = [
+        ("raas_diff",          "RAAS differential (double-miss)-aas [correct analog=epistasis]"),
         ("combined_dddg_pred", "ESM epistasis ddddG (double - both singles)"),
         ("double_minus_aas",   "ESM double - AAS single  (carrier both - AAS alone)"),
         ("miss_single_ddg",    "ESM missense single ddG (isolates the missense)"),
