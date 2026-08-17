@@ -30,6 +30,8 @@ def main():
     ap.add_argument("--swap-map", default="/scratch/leduc.an/AAS_Evo/FASTA/contact_saap_swap_map.tsv")
     ap.add_argument("--missense", default="/projects/slavov/andrew/AAS_EVO/all_missense_mutations.tsv")
     ap.add_argument("--results-base", default="/scratch/leduc.an/AAS_Evo/MS_SEARCH/results_contact")
+    ap.add_argument("--raas-summary", default=f"{B}/per_swap_raas_summary.tsv",
+                    help="per-swap raw RAAS summary from the notebook (gene, swap, median ...)")
     ap.add_argument("--pmax", type=float, default=0.05)
     ap.add_argument("--use-q", action="store_true")
     ap.add_argument("--coincide-window", type=int, default=15)
@@ -116,11 +118,27 @@ def main():
     # peptide uniqueness: does any hit swap peptide appear under >1 gene?
     shared = {pep: gs for pep, gs in pep_to_genes.items() if len(gs) > 1}
 
+    # ── raw RAAS: is the hit's RAAS abnormally high vs the overall dist? ──────
+    hits["raas_median"] = np.nan
+    hits["raas_pctile"] = np.nan
+    try:
+        rs = pd.read_csv(args.raas_summary, sep="\t")
+        overall = rs["median"].dropna().values
+        rmap = {(g, s): m for g, s, m in zip(rs["gene"], rs["swap"], rs["median"])}
+        hits["raas_median"] = [rmap.get((g, s), np.nan) for g, s in zip(hits["gene"], hits["swap"])]
+        hits["raas_pctile"] = [
+            round(100 * (overall < v).mean(), 1) if pd.notna(v) else np.nan
+            for v in hits["raas_median"]]
+        print(f"\n(raw RAAS loaded: overall median log2 RAAS = {np.median(overall):.2f}, "
+              f"95th pct = {np.percentile(overall, 95):.2f})")
+    except FileNotFoundError:
+        print(f"\n(no RAAS summary at {args.raas_summary}; run the notebook RAW RAAS SANITY cell)")
+
     # ── report ───────────────────────────────────────────────────────────────
     pd.set_option("display.width", 200); pd.set_option("display.max_colwidth", 40)
     cols = ["gene", "contact_pos", "swap", "driving_missense", "n_driving_missense",
             "coincide_same_residue", "n_carrier", "n_noncarrier", "n_sets",
-            "delta", "p", "q", "n_psm"]
+            "delta", "p", "q", "n_psm", "raas_median", "raas_pctile"]
     print("\n=== HITS: AAS swap + driving missense + coinciding same-residue missense ===")
     print(hits[cols].to_string(index=False))
 
@@ -152,6 +170,12 @@ def main():
     print(f"  swap peptides shared across >1 gene (paralog risk): {len(hit_shared)}")
     for p, gs in list(hit_shared.items())[:10]:
         print(f"      {p}: {sorted(gs)}")
+    hi_raas = hits[pd.to_numeric(hits["raas_pctile"], errors="coerce") >= 95]
+    print(f"  hits with RAAS above the 95th pct of all swaps (abnormally high -> suspect): "
+          f"{len(hi_raas)}"
+          + (" -> " + ", ".join(f"{g} {s}(p{int(pc)})"
+                                for g, s, pc in zip(hi_raas['gene'], hi_raas['swap'],
+                                                    hi_raas['raas_pctile'])) if len(hi_raas) else ""))
 
 
 if __name__ == "__main__":
