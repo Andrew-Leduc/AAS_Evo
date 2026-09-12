@@ -64,9 +64,11 @@ def main():
     # our per-plex search space + contact wt
     tmt = pd.read_csv(a.tmt_map, sep="\t")
     case2plex = tmt.groupby("case_submitter_id")["run_metadata_id"].agg(set).to_dict()
-    man = pd.read_csv(a.manifest, sep="\t")
-    plex_sites = man.groupby("plex_id").apply(
-        lambda d: set(zip(d["gene"], d["contact_pos"]))).to_dict()
+    man = pd.read_csv(a.manifest, sep="\t",
+                      usecols=["plex_id", "gene", "contact_pos"]).drop_duplicates()
+    plex_sites = {}
+    for plex, gene, cp in zip(man["plex_id"], man["gene"], man["contact_pos"]):
+        plex_sites.setdefault(plex, set()).add((gene, int(cp)))
     smap = pd.read_csv(a.swap_map, sep="\t")
     site_wt = {(g, int(p)): w for g, p, w in zip(smap["gene"], smap["contact_pos"], smap["wt_aa"])}
 
