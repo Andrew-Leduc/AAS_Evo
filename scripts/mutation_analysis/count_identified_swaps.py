@@ -44,48 +44,48 @@ def is_suspicious(swap):
     return any(abs(d - p) < _PTM_TOL for p in _PTM_MASSES)
 
 
-def swap_from_row(prot, prot_id, mapped, gene_desc):
-    """Return (gene, swap, acc) if any protein field is a swap accession, else None."""
-    for field in (prot_id, prot, mapped):
-        if not isinstance(field, str):
-            continue
-        for chunk in field.split(','):
-            m = SWAP_RE.search(chunk.strip())
-            if m:
-                return m.group(1), m.group(2)      # acc, swap
-    return None
-
-
 def main():
     plex_dirs = sorted(d for d in glob.glob(os.path.join(RESULTS_BASE, '*'))
                        if os.path.isdir(d))
-    rows = []           # (gene/acc, swap, peptide, spectrum)
+    parts = []          # per-file DataFrames of swap PSMs
     n_files = 0
     for pd_dir in plex_dirs:
         psm_files = sorted(glob.glob(os.path.join(pd_dir, '*_1', 'psm.tsv'))) \
                     or sorted(glob.glob(os.path.join(pd_dir, 'psm.tsv')))
         for pf in psm_files:
             n_files += 1
+            if n_files % 20 == 0:
+                print(f'  {n_files} files, {sum(len(p) for p in parts):,} swap PSMs so far', flush=True)
             try:
-                t = pd.read_csv(pf, sep='\t', low_memory=False)
+                head = pd.read_csv(pf, sep='\t', nrows=0)
             except Exception as e:
                 print(f'  WARN cannot read {pf}: {e}')
                 continue
-            cols = {c.lower(): c for c in t.columns}
+            cols = {c.lower(): c for c in head.columns}
             c_prot = cols.get('protein')
             c_pid = cols.get('protein id')
             c_map = cols.get('mapped proteins')
             c_pep = cols.get('peptide') or cols.get('modified peptide')
-            c_spec = cols.get('spectrum')
-            for r in t.itertuples(index=False):
-                d = r._asdict()
-                hit = swap_from_row(d.get(c_prot), d.get(c_pid), d.get(c_map), None)
-                if hit is None:
-                    continue
-                acc, swap = hit
-                rows.append((acc, swap,
-                             d.get(c_pep, ''), d.get(c_spec, '')))
-    df = pd.DataFrame(rows, columns=['acc', 'swap', 'peptide', 'spectrum'])
+            use = [c for c in (c_pid, c_prot, c_map, c_pep) if c]
+            t = pd.read_csv(pf, sep='\t', usecols=use, dtype=str,
+                            low_memory=False).fillna('')
+            # combined protein string, one regex-extract for the whole column
+            prot_all = t[c_pid] if c_pid else ''
+            for extra in (c_prot, c_map):
+                if extra:
+                    prot_all = prot_all + ',' + t[extra]
+            ex = prot_all.str.extract(SWAP_RE.pattern)   # cols 0=acc, 1=swap
+            mask = ex[1].notna()
+            if not mask.any():
+                continue
+            sub = pd.DataFrame({
+                'acc': ex.loc[mask, 0].values,
+                'swap': ex.loc[mask, 1].values,
+                'peptide': t.loc[mask, c_pep].values if c_pep else '',
+            })
+            parts.append(sub)
+    df = pd.concat(parts, ignore_index=True) if parts else \
+        pd.DataFrame(columns=['acc', 'swap', 'peptide'])
     print(f'scanned {n_files} psm.tsv files across {len(plex_dirs)} plex dirs\n')
 
     def report(name, sub):
