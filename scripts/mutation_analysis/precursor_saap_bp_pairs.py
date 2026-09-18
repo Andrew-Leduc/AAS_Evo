@@ -92,8 +92,6 @@ def main():
     # Build BP-sequence -> (acc,pos) map lazily as we discover sites.
     bp_map = {}            # bp_seq -> set of (acc,pos)
     site_wt = {}           # (acc,pos) -> wt_aa
-    saap_rows = []         # (acc,pos,wt,alt,run,plex,intensity,rt)
-    bp_hits = []           # (acc,pos,run,plex,intensity,rt) — filled 2nd pass
     n_files = 0
 
     def ensure_site(acc, pos, wt):
@@ -135,48 +133,70 @@ def main():
                     ensure_site(acc, int(m.group(2)), m.group(1))
     print(f'registered {len(site_wt):,} contact sites; {len(bp_map):,} BP peptide seqs')
 
-    # ---- pass 2: pull intensities/RT for swaps and BPs ----
-    for pf, (plex, c_pid, c_prot, c_map, c_pep, c_int, c_rt, c_spec) in per_file_cols.items():
+    # ---- pass 2: pull intensities/RT for swaps and BPs (vectorized per file) ----
+    saap_parts, bp_parts = [], []
+    bp_keys = set(bp_map)
+    for fi, (pf, (plex, c_pid, c_prot, c_map, c_pep, c_int, c_rt, c_spec)) \
+            in enumerate(per_file_cols.items()):
+        if fi % 20 == 0:
+            print(f'  pass2 {fi}/{len(per_file_cols)} files', flush=True)
         use = [c for c in (c_pid, c_prot, c_map, c_pep, c_int, c_rt, c_spec) if c]
         t = pd.read_csv(pf, sep='\t', usecols=use, dtype=str).fillna('')
-        inten = pd.to_numeric(t[c_int], errors='coerce') if c_int else np.nan
-        rt = pd.to_numeric(t[c_rt], errors='coerce') if c_rt else np.nan
-        run = t[c_spec].map(parse_run) if c_spec else ''
-        prot_all = t[c_pid] if c_pid else pd.Series([''] * len(t))
+        n = len(t)
+        inten = pd.to_numeric(t[c_int], errors='coerce') if c_int \
+            else pd.Series(np.nan, index=t.index)
+        rt = pd.to_numeric(t[c_rt], errors='coerce') if c_rt \
+            else pd.Series(np.nan, index=t.index)
+        run = t[c_spec].map(parse_run) if c_spec else pd.Series('', index=t.index)
+        pep = t[c_pep] if c_pep else pd.Series('', index=t.index)
+        prot_all = t[c_pid] if c_pid else pd.Series([''] * n, index=t.index)
         for extra in (c_prot, c_map):
             if extra:
                 prot_all = prot_all + ',' + t[extra]
-        ex = prot_all.str.extract(SWAP_RE.pattern)
-        for i in range(len(t)):
-            sw = ex.iat[i, 1]
-            if isinstance(sw, str):
-                m = re.match(r'^([A-Z])(\d+)([A-Z])$', sw)
-                if m:
-                    saap_rows.append((ex.iat[i, 0], int(m.group(2)), m.group(1),
-                                      m.group(3), run.iat[i], plex,
-                                      inten.iat[i], rt.iat[i]))
-                    continue
-            sites = bp_map.get(t[c_pep].iat[i])
-            if sites:
-                for acc, pos in sites:
-                    bp_hits.append((acc, pos, run.iat[i], plex,
-                                    inten.iat[i], rt.iat[i]))
+        ex = prot_all.str.extract(SWAP_RE.pattern)      # 0=acc, 1=swap
 
-    saap = pd.DataFrame(saap_rows, columns=['acc', 'pos', 'wt', 'alt', 'run',
-                                            'plex', 'intensity', 'rt'])
-    bp = pd.DataFrame(bp_hits, columns=['acc', 'pos', 'run', 'plex',
-                                        'intensity', 'rt'])
+        # --- swaps ---
+        m_sw = ex[1].notna()
+        if m_sw.any():
+            sp = ex.loc[m_sw, 1].str.extract(r'^([A-Z])(\d+)([A-Z])$')
+            sw = pd.DataFrame({
+                'acc': ex.loc[m_sw, 0].values,
+                'wt': sp[0].values,
+                'pos': pd.to_numeric(sp[1], errors='coerce').values,
+                'alt': sp[2].values,
+                'run': run[m_sw].values, 'plex': plex,
+                'intensity': inten[m_sw].values, 'rt': rt[m_sw].values,
+            }).dropna(subset=['pos'])
+            sw['pos'] = sw['pos'].astype(int)
+            saap_parts.append(sw)
+
+        # --- base peptides (WT covering a contact site) ---
+        m_bp = (~m_sw) & pep.isin(bp_keys)
+        if m_bp.any():
+            b = pd.DataFrame({
+                'peptide': pep[m_bp].values, 'run': run[m_bp].values,
+                'plex': plex, 'intensity': inten[m_bp].values,
+                'rt': rt[m_bp].values,
+            })
+            b['sites'] = b['peptide'].map(lambda p: list(bp_map[p]))
+            b = b.explode('sites')
+            b[['acc', 'pos']] = pd.DataFrame(b['sites'].tolist(), index=b.index)
+            bp_parts.append(b[['acc', 'pos', 'run', 'plex', 'intensity', 'rt']])
+
+    saap = pd.concat(saap_parts, ignore_index=True) if saap_parts else \
+        pd.DataFrame(columns=['acc', 'wt', 'pos', 'alt', 'run', 'plex', 'intensity', 'rt'])
+    bp = pd.concat(bp_parts, ignore_index=True) if bp_parts else \
+        pd.DataFrame(columns=['acc', 'pos', 'run', 'plex', 'intensity', 'rt'])
     print(f'swap PSMs: {len(saap):,} | BP PSMs: {len(bp):,}')
 
     # aggregate to one value per (site[,alt], run): sum intensity, intensity-wt RT
     def agg(df, keys):
-        df = df.dropna(subset=['intensity'])
-        g = df.groupby(keys)
-        out = g['intensity'].sum().rename('intensity').reset_index()
-        rtw = (g.apply(lambda x: np.average(x['rt'], weights=x['intensity'])
-                       if x['intensity'].sum() > 0 else x['rt'].median())
-               .rename('rt').reset_index())
-        return out.merge(rtw, on=keys)
+        df = df.dropna(subset=['intensity']).copy()
+        df['w_rt'] = df['rt'] * df['intensity']
+        g = df.groupby(keys, as_index=False).agg(
+            intensity=('intensity', 'sum'), w_rt=('w_rt', 'sum'))
+        g['rt'] = g['w_rt'] / g['intensity'].replace(0, np.nan)
+        return g.drop(columns='w_rt')
 
     saap_a = agg(saap, ['acc', 'pos', 'wt', 'alt', 'run', 'plex'])
     bp_a = agg(bp, ['acc', 'pos', 'run', 'plex']).rename(
