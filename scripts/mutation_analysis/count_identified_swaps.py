@@ -20,6 +20,7 @@ import re
 import pandas as pd
 
 RESULTS_BASE = "/scratch/leduc.an/AAS_Evo/MS_SEARCH/results_contact"
+OUT_DIR = "/scratch/leduc.an/AAS_Evo/ANALYSIS/contact_saap"
 
 _AA_MASS = {'A':71.03711,'C':103.00919,'D':115.02694,'E':129.04259,'F':147.06841,
             'G':57.02146,'H':137.05891,'I':113.08406,'K':128.09496,'L':113.08406,
@@ -102,6 +103,52 @@ def main():
     report('2. After PTM-mass suspicious filter', clean)
     n_susp = df.drop_duplicates(['acc', 'swap'])['swap'].map(is_suspicious).sum()
     print(f'(dropped {n_susp:,} unique swaps flagged as PTM-mass confounds)')
+
+    write_heatmap(clean, 'clean')
+    write_heatmap(df, 'raw')
+
+
+# 20 aa in a chemically-grouped order (nonpolar / polar / acidic / basic / aromatic)
+AA_ORDER = list('GAVLIPMCSTNQDEKRHFYW')
+
+
+def write_heatmap(sub, tag):
+    """20x20 WT(X)->ALT(Z) substitution matrix of UNIQUE swaps + PNG heatmap."""
+    u = sub.drop_duplicates(['acc', 'swap']).copy()
+    u['wt'] = u['swap'].str[0]
+    u['alt'] = u['swap'].str[-1]
+    mat = (pd.crosstab(u['wt'], u['alt'])
+             .reindex(index=AA_ORDER, columns=AA_ORDER, fill_value=0))
+    tsv = os.path.join(OUT_DIR, f'swap_heatmap_{tag}.tsv')
+    mat.to_csv(tsv, sep='\t')
+    print(f'wrote {tsv}  (n unique swaps = {int(mat.values.sum()):,})')
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import numpy as np
+        fig, ax = plt.subplots(figsize=(9, 8))
+        M = mat.values.astype(float)
+        im = ax.imshow(np.ma.masked_equal(M, 0), cmap='viridis', aspect='equal')
+        ax.set_xticks(range(20)); ax.set_xticklabels(AA_ORDER, fontsize=9)
+        ax.set_yticks(range(20)); ax.set_yticklabels(AA_ORDER, fontsize=9)
+        ax.set_xlabel('ALT (Z)', fontweight='bold')
+        ax.set_ylabel('WT (X)', fontweight='bold')
+        ax.set_title(f'Identified X→Z swaps ({tag}): '
+                     f'{int(M.sum()):,} unique', fontweight='bold')
+        for i in range(20):
+            for j in range(20):
+                v = int(M[i, j])
+                if v:
+                    ax.text(j, i, v, ha='center', va='center', fontsize=6,
+                            color='white' if v < M.max() * 0.6 else 'black')
+        fig.colorbar(im, ax=ax, shrink=0.8, label='unique swaps')
+        plt.tight_layout()
+        png = os.path.join(OUT_DIR, f'swap_heatmap_{tag}.png')
+        plt.savefig(png, dpi=200, bbox_inches='tight')
+        print(f'wrote {png}')
+    except Exception as e:
+        print(f'  (heatmap PNG skipped: {e})')
 
 
 if __name__ == '__main__':
