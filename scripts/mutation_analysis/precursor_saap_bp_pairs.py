@@ -32,6 +32,18 @@ OUT_DIR = "/scratch/leduc.an/AAS_Evo/ANALYSIS/contact_saap"
 
 SWAP_RE = re.compile(r'\b([A-Z0-9]+)-([A-Z]\d+[A-Z])-[0-9A-F]{4}\b')
 MIN_PEP_LEN = 6
+CLEAN_ONLY = True          # drop PTM-mass-confound swaps (matches count_identified_swaps)
+
+_AA_MASS = {'A':71.03711,'C':103.00919,'D':115.02694,'E':129.04259,'F':147.06841,
+            'G':57.02146,'H':137.05891,'I':113.08406,'K':128.09496,'L':113.08406,
+            'M':131.04049,'N':114.04293,'P':97.05276,'Q':128.05858,'R':156.10111,
+            'S':87.03203,'T':101.04768,'V':99.06841,'W':186.07931,'Y':163.06333}
+_PTM_MASSES = [14.01565, 15.99491, 2.01565, 0.98402, 42.01057, 79.96633, 18.01056,
+               14.99967, 28.03130, 16.97893, 31.98983, 1.96804]   # incl. 2x deamidation
+_PTM_TOL = 0.05
+_SUSP_PAIRS = {(wt, alt) for wt in _AA_MASS for alt in _AA_MASS
+               if wt != alt and any(abs(abs(_AA_MASS[alt] - _AA_MASS[wt]) - p) < _PTM_TOL
+                                    for p in _PTM_MASSES)}
 
 
 # ── reference sequences + tryptic BP peptides ────────────────────────────────
@@ -188,6 +200,14 @@ def main():
     bp = pd.concat(bp_parts, ignore_index=True) if bp_parts else \
         pd.DataFrame(columns=['acc', 'pos', 'run', 'plex', 'intensity', 'rt'])
     print(f'swap PSMs: {len(saap):,} | BP PSMs: {len(bp):,}')
+
+    if CLEAN_ONLY and len(saap):
+        n0 = saap.drop_duplicates(['acc', 'pos', 'wt', 'alt']).shape[0]
+        keep = [(w, a) not in _SUSP_PAIRS for w, a in zip(saap['wt'], saap['alt'])]
+        saap = saap[keep]
+        n1 = saap.drop_duplicates(['acc', 'pos', 'wt', 'alt']).shape[0]
+        print(f'CLEAN_ONLY: {n0:,} -> {n1:,} unique swaps '
+              f'(dropped {n0 - n1:,} PTM-mass confounds)')
 
     # aggregate to one value per (site[,alt], run): sum intensity, intensity-wt RT
     def agg(df, keys):
