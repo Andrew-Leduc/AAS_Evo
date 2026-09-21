@@ -70,6 +70,15 @@ def main():
     df["n_mismatch"] = [min_mismatch(c, al) for c, al in zip(df["codon"], df["alt"])]
     df["wt_codon_freq"] = df["codon"].map(CODON_FREQ)
 
+    # collapse to ONE value per unique SAAP (mean RAAS across its runs) so swaps
+    # seen in many runs are not pseudo-replicated.
+    df = df.groupby(["acc", "pos", "wt", "alt"], as_index=False).agg(
+        raas_precursor=("raas_precursor", "mean"),
+        n_mismatch=("n_mismatch", "first"),
+        wt_codon_freq=("wt_codon_freq", "first"),
+        codon=("codon", "first"))
+    print(f"unique SAAPs (mean RAAS per swap): {len(df):,}")
+
     # ── #3 RAAS by # nt mismatch ──
     print("\n#3  RAAS by # nucleotide mismatches")
     g3 = df.groupby("n_mismatch")["raas_precursor"].agg(["mean", "median", "size"])
