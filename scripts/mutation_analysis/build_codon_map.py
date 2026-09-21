@@ -84,7 +84,19 @@ def main():
     wt_of = {(r.acc, int(r.pos)): r.wt for r in pairs.itertuples()}
     print(f"{len(pairs):,} sites across {len(sites):,} proteins")
 
+    # sanity: confirm pyensembl data is actually installed/queryable
+    try:
+        _probe = data.genes_by_name("TP53")
+        print(f"pyensembl OK: TP53 -> {len(_probe)} gene(s), "
+              f"{sum(len(g.transcripts) for g in _probe)} transcripts")
+    except Exception as e:
+        raise SystemExit(f"pyensembl not usable ({type(e).__name__}: {e}). "
+                         f"Did `pyensembl install --release {a.release} --species homo_sapiens` "
+                         f"run in THIS environment?")
+
     tx_cache = {}
+    diag = {"no_gene": 0, "lookup_err": 0, "no_cands": 0, "no_match": 0}
+    _first_err = [True]
 
     def pick_transcript(acc):
         if acc in tx_cache:
@@ -92,12 +104,22 @@ def main():
         gene = acc2gene.get(acc)
         up = seqs.get(acc, "")
         chosen = None
+        if not gene or not up:
+            diag["no_gene"] += 1
+            tx_cache[acc] = None
+            return None
         if gene and up:
             try:
                 cands = [t for g in data.genes_by_name(gene) for t in g.transcripts
                          if t.is_protein_coding and t.complete]
-            except Exception:
+            except Exception as e:
+                diag["lookup_err"] += 1
+                if _first_err[0]:
+                    print(f"  (first lookup error, gene={gene}: {type(e).__name__}: {e})")
+                    _first_err[0] = False
                 cands = []
+            if not cands:
+                diag["no_cands"] += 1
             best = None
             for t in cands:
                 try:
@@ -116,6 +138,8 @@ def main():
                     best = (k, t)
             if chosen is None and best and best[0] >= 0.9 * len(up):
                 chosen = best[1]
+            if chosen is None and cands:
+                diag["no_match"] += 1
         tx_cache[acc] = chosen
         return chosen
 
@@ -153,12 +177,15 @@ def main():
             rows.append(row)
             n_ok += 1
 
-    out = pd.DataFrame(rows)
+    cols = ["acc", "gene", "pos", "wt", "transcript_id", "codon",
+            "chrom", "strand", "g1", "g2", "g3"]
+    out = pd.DataFrame(rows, columns=cols)
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
     out.to_csv(a.out, sep="\t", index=False)
     print(f"mapped codons: {n_ok:,} | proteins w/o transcript: {n_notx:,} | "
           f"aa mismatches dropped: {n_mismatch:,}")
-    print(f"  with genomic coords: {int((out['g1']!='').sum()):,}")
+    print(f"  transcript-lookup diag: {diag}")
+    print(f"  with genomic coords: {int((out['g1'].astype(str) != '').sum()):,}")
     print(f"wrote {a.out}")
 
 
