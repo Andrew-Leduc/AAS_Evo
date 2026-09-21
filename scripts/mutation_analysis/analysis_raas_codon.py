@@ -62,6 +62,7 @@ def main():
     cm = pd.read_csv(a.codons, sep="\t", usecols=["acc", "pos", "wt", "codon"])
     df = pairs.merge(cm, on=["acc", "pos", "wt"], how="inner")
     df = df.dropna(subset=["raas_precursor", "codon"])
+    df = df[np.isfinite(df["raas_precursor"])]          # drop +/-inf from zero-intensity pairs
     df = df[df["codon"].str.len() == 3]
     print(f"pairs with codon + RAAS: {len(df):,} "
           f"({df.groupby(['acc','pos','wt','alt']).ngroups:,} unique SAAPs)")

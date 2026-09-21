@@ -40,6 +40,7 @@ def main():
 
     df = pd.read_csv(a.pairs, sep="\t")
     df = df.dropna(subset=["rt_shift", "wt", "alt"]).copy()
+    df = df[np.isfinite(df["rt_shift"])]
     df["expected"] = df["alt"].map(RP_RANK) - df["wt"].map(RP_RANK)
     df = df.dropna(subset=["expected"])
     print(f"same-run pairs with RT: {len(df):,}  ({df.groupby(['acc','pos','wt','alt']).ngroups:,} unique SAAPs)")
