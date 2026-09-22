@@ -131,7 +131,10 @@ def main():
             c_map = cols.get('mapped proteins'); c_pep = cols.get('peptide')
             c_int = cols.get('intensity'); c_rt = cols.get('retention')
             c_spec = cols.get('spectrum')
-            per_file_cols[pf] = (plex, c_pid, c_prot, c_map, c_pep, c_int, c_rt, c_spec)
+            c_prob = cols.get('peptideprophet probability') or cols.get('probability')
+            c_pperr = cols.get('pep')
+            per_file_cols[pf] = (plex, c_pid, c_prot, c_map, c_pep, c_int, c_rt,
+                                 c_spec, c_prob, c_pperr)
             use = [c for c in (c_pid, c_prot, c_map, c_pep) if c]
             t = pd.read_csv(pf, sep='\t', usecols=use, dtype=str).fillna('')
             prot_all = t[c_pid] if c_pid else pd.Series([''] * len(t))
@@ -148,17 +151,24 @@ def main():
     # ---- pass 2: pull intensities/RT for swaps and BPs (vectorized per file) ----
     saap_parts, bp_parts = [], []
     bp_keys = set(bp_map)
-    for fi, (pf, (plex, c_pid, c_prot, c_map, c_pep, c_int, c_rt, c_spec)) \
-            in enumerate(per_file_cols.items()):
+    for fi, (pf, (plex, c_pid, c_prot, c_map, c_pep, c_int, c_rt, c_spec,
+                  c_prob, c_pperr)) in enumerate(per_file_cols.items()):
         if fi % 20 == 0:
             print(f'  pass2 {fi}/{len(per_file_cols)} files', flush=True)
-        use = [c for c in (c_pid, c_prot, c_map, c_pep, c_int, c_rt, c_spec) if c]
+        use = [c for c in (c_pid, c_prot, c_map, c_pep, c_int, c_rt, c_spec,
+                           c_prob, c_pperr) if c]
         t = pd.read_csv(pf, sep='\t', usecols=use, dtype=str).fillna('')
         n = len(t)
         inten = pd.to_numeric(t[c_int], errors='coerce') if c_int \
             else pd.Series(np.nan, index=t.index)
         rt = pd.to_numeric(t[c_rt], errors='coerce') if c_rt \
             else pd.Series(np.nan, index=t.index)
+        if c_prob:                                  # higher = better
+            conf = pd.to_numeric(t[c_prob], errors='coerce')
+        elif c_pperr:                               # PEP: lower = better -> 1-PEP
+            conf = 1 - pd.to_numeric(t[c_pperr], errors='coerce')
+        else:
+            conf = pd.Series(np.nan, index=t.index)
         run = t[c_spec].map(parse_run) if c_spec else pd.Series('', index=t.index)
         pep = t[c_pep] if c_pep else pd.Series('', index=t.index)
         prot_all = t[c_pid] if c_pid else pd.Series([''] * n, index=t.index)
@@ -178,6 +188,7 @@ def main():
                 'alt': sp[2].values,
                 'run': run[m_sw].values, 'plex': plex,
                 'intensity': inten[m_sw].values, 'rt': rt[m_sw].values,
+                'conf': conf[m_sw].values,
             }).dropna(subset=['pos'])
             sw['pos'] = sw['pos'].astype(int)
             saap_parts.append(sw)
@@ -196,7 +207,7 @@ def main():
             bp_parts.append(b[['acc', 'pos', 'run', 'plex', 'intensity', 'rt']])
 
     saap = pd.concat(saap_parts, ignore_index=True) if saap_parts else \
-        pd.DataFrame(columns=['acc', 'wt', 'pos', 'alt', 'run', 'plex', 'intensity', 'rt'])
+        pd.DataFrame(columns=['acc', 'wt', 'pos', 'alt', 'run', 'plex', 'intensity', 'rt', 'conf'])
     bp = pd.concat(bp_parts, ignore_index=True) if bp_parts else \
         pd.DataFrame(columns=['acc', 'pos', 'run', 'plex', 'intensity', 'rt'])
     print(f'swap PSMs: {len(saap):,} | BP PSMs: {len(bp):,}')
@@ -219,11 +230,15 @@ def main():
         return g.drop(columns='w_rt')
 
     saap_a = agg(saap, ['acc', 'pos', 'wt', 'alt', 'run', 'plex'])
+    keys = ['acc', 'pos', 'wt', 'alt', 'run', 'plex']
+    conf_a = (saap.dropna(subset=['conf']).groupby(keys, as_index=False)['conf'].max())
+    saap_a = saap_a.merge(conf_a, on=keys, how='left')
     bp_a = agg(bp, ['acc', 'pos', 'run', 'plex']).rename(
         columns={'intensity': 'bp_intensity', 'rt': 'bp_rt'})
 
     pairs = saap_a.merge(bp_a, on=['acc', 'pos', 'run', 'plex'], how='left')
-    pairs = pairs.rename(columns={'intensity': 'saap_intensity', 'rt': 'saap_rt'})
+    pairs = pairs.rename(columns={'intensity': 'saap_intensity', 'rt': 'saap_rt',
+                                  'conf': 'saap_prob'})
     same = pairs['bp_intensity'].notna()
     pairs.loc[same, 'raas_precursor'] = np.log2(
         pairs.loc[same, 'saap_intensity'] / pairs.loc[same, 'bp_intensity'])
